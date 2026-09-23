@@ -1,0 +1,82 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* Green + white theme. Primary is the logo green (#16a34a = 142 76% 36%). */
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 150 30% 8%;
+    --card: 0 0% 100%;
+    --card-foreground: 150 30% 8%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 150 30% 8%;
+    --primary: 142 76% 36%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 138 60% 96%;
+    --secondary-foreground: 143 64% 20%;
+    --muted: 140 30% 96%;
+    --muted-foreground: 150 8% 42%;
+    --accent: 138 60% 94%;
+    --accent-foreground: 143 64% 20%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 140 20% 90%;
+    --input: 140 20% 88%;
+    --ring: 142 76% 36%;
+    --radius: 0.625rem;
+
+    --sidebar: 0 0% 100%;
+    --sidebar-foreground: 150 20% 25%;
+    --sidebar-border: 140 20% 91%;
+    --sidebar-accent: 138 60% 94%;
+
+    --success: 142 71% 40%;
+    --warning: 38 92% 50%;
+    --danger: 0 72% 51%;
+    --info: 199 89% 48%;
+  }
+
+  .dark {
+    --background: 150 25% 6%;
+    --foreground: 140 20% 95%;
+    --card: 150 22% 9%;
+    --card-foreground: 140 20% 95%;
+    --popover: 150 22% 9%;
+    --popover-foreground: 140 20% 95%;
+    --primary: 142 70% 45%;
+    --primary-foreground: 150 40% 6%;
+    --secondary: 150 18% 14%;
+    --secondary-foreground: 140 30% 90%;
+    --muted: 150 18% 13%;
+    --muted-foreground: 145 10% 62%;
+    --accent: 150 22% 16%;
+    --accent-foreground: 140 30% 92%;
+    --destructive: 0 62% 45%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 150 15% 17%;
+    --input: 150 15% 19%;
+    --ring: 142 70% 45%;
+
+    --sidebar: 150 25% 7%;
+    --sidebar-foreground: 140 15% 80%;
+    --sidebar-border: 150 15% 15%;
+    --sidebar-accent: 150 22% 15%;
+
+    --success: 142 70% 45%;
+    --warning: 38 92% 55%;
+    --danger: 0 72% 60%;
+    --info: 199 89% 55%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background font-sans text-foreground antialiased;
+    min-height: 100vh;
+  }
+}

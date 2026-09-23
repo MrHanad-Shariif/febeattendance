@@ -1,0 +1,10 @@
+* text=auto
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.Dockerfile text eol=lf
+Caddyfile text eol=lf
+*.png binary
+*.jpg binary
+*.xlsx binary
+*.xls binary
+*.pdf binary

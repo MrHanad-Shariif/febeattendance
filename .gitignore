@@ -1,0 +1,36 @@
+# ---- Secrets & local config (never commit) ----
+.env
+.env.*
+!.env.example
+!.env.production.example
+backend/.env
+frontend/.env
+
+# ---- Personal data & source spreadsheets (student names, phones, dates of birth) ----
+data/*
+!data/README.md
+!data/.gitkeep
+*.xls
+*.xlsx
+
+# ---- Backend ----
+backend/.venv/
+backend/venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+backend/instance/
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# ---- Frontend ----
+frontend/node_modules/
+frontend/dist/
+
+# ---- Logs, editors, OS ----
+*.log
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+.claude/
