@@ -10,7 +10,8 @@ from app.models import User, PasswordResetToken, Timetable
 from app.utils.authz import current_user, issue_token, roles_required
 from app.utils.constants import DEPARTMENTS
 from app.utils.email import send_password_reset_email, send_verification_email
-from app.utils.uploads import save_student_photo
+from app.utils.checkin_session import load_enroll_token, make_enroll_token
+from app.utils.face_enrollment import enroll_student_face
 from app.utils.validation import ValidationError, check_password, clean_email, clean_text
 
 # Compared against when the email is unknown, so "no such user" takes as long
@@ -103,21 +104,23 @@ def register_student():
     are attached to it. This lets a student use a personal email if they can't
     access their official one yet. (See SECURITY.md: claiming is authenticated
     only by knowing the ID number.)
+
+    The response carries a short-lived enroll_token for /enroll-face, so the
+    student can register their face straight away, before confirming email.
     """
-    form = request.form
-    name = clean_text(form.get("name"), "Name", max_len=200, required=True)
+    form = request.get_json(silent=True) if request.is_json else request.form
+    form = form or {}
+    name = clean_text(form.get("name"), "Full name", max_len=200, required=True)
     email = clean_email(form.get("email"))
     password = check_password(form.get("password"))
     student_id_number = clean_text(form.get("student_id_number"), "Student ID number", max_len=50, required=True)
-    department = clean_text(form.get("department"), "Department", max_len=150, required=True)
     batch = clean_text(form.get("batch"), "Batch", max_len=50, required=True)
+    department = clean_text(form.get("department"), "Department", max_len=150)
 
-    if department not in DEPARTMENTS:
+    if department and department not in DEPARTMENTS:
         raise ValidationError("Please select a valid department")
-
-    photo_file = request.files.get("photo")
-    if not photo_file or not photo_file.filename:
-        raise ValidationError("A photo is required")
+    if str(form.get("face_consent")).lower() not in ("true", "1", "on", "yes"):
+        raise ValidationError("Please agree to the use of your face for attendance verification")
 
     existing = User.query.filter_by(student_id_number=student_id_number, role="student").first()
 
@@ -132,23 +135,22 @@ def register_student():
     if email_owner and (not existing or email_owner.id != existing.id):
         return jsonify({"error": "A user with that email already exists"}), 409
 
-    photo_filename = save_student_photo(photo_file)
-
     if existing:
         # Claim the pre-imported record rather than creating a duplicate.
         existing.name = name
         existing.email = email
-        existing.department = department
+        existing.department = department or existing.department
         existing.batch = batch
         existing.status = "pending_verification"
         existing.set_password(password)
-        existing.photo_filename = photo_filename
+        if existing.face is not None:
+            # Unconfirmed account being registered again: the new registrant enrolls afresh.
+            db.session.delete(existing.face)
         user = existing
     else:
         user = User(
             name=name, email=email, role="student", status="pending_verification",
             student_id_number=student_id_number, department=department, batch=batch,
-            photo_filename=photo_filename,
         )
         user.set_password(password)
         db.session.add(user)
@@ -156,7 +158,23 @@ def register_student():
     db.session.flush()
     _send_email_verification(user)
 
-    return jsonify({"message": "Almost done! Check your email for a link to confirm your address."}), 201
+    return jsonify({
+        "message": "Account created. Next, register your face.",
+        "enroll_token": make_enroll_token(user.id),
+    }), 201
+
+
+@auth_bp.post("/enroll-face")
+@limiter.limit("10/hour", key_func=lambda: f"enroll:{str(request.form.get('enroll_token'))[-32:]}")
+def enroll_face_after_signup():
+    """Face registration straight after sign-up, authorised by the
+    enroll_token from /register-student (the student can't sign in until they
+    confirm their email). Signed-in students use /student/face instead."""
+    user = User.query.get(load_enroll_token(request.form.get("enroll_token")))
+    if not user or user.role != "student" or user.status not in ("pending_verification", "active"):
+        raise ValidationError("Face registration timed out. Sign in after confirming your email and you'll be asked to register your face.")
+    enroll_student_face(user)
+    return jsonify({"message": "Face registered. Check your email for a link to confirm your address."}), 201
 
 
 @auth_bp.get("/verify-email/<token>")

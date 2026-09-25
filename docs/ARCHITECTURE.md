@@ -33,12 +33,12 @@ The SPA and API share one origin in production (`/api`), so no CORS is involved;
 | `app/__init__.py` | App factory, blueprint registration, CLI commands (`init-db`, `seed-admin`, `import-*`) |
 | `app/security.py` | Production config guard, time zone, proxy headers, security headers, JSON error handlers |
 | `app/config.py` | Environment-driven configuration and the production safety check |
-| `app/models.py` | `User`, `Timetable`, `Attendance`, `StudentAttendance`, `Setting`, `PasswordResetToken` |
+| `app/models.py` | `User`, `Timetable`, `Attendance`, `StudentAttendance`, `StudentFace`, `FaceCheckAttempt`, `Setting`, `PasswordResetToken` |
 | `app/auth/` | Login, registration, email verification, invite/activate, password reset |
 | `app/admin/` | Lecturers, students, admins, timetable, settings, attendance, reports, QR codes |
 | `app/attendance/` | Lecturer check-in / check-out |
-| `app/lecturer/` | Lecturer's own day/history, class code, their students' attendance |
-| `app/student/` | Timetable, today's sessions, check-in, report |
+| `app/lecturer/` | Lecturer's own day/history, per-session QR code and class code, their students' attendance |
+| `app/student/` | Timetable, today's sessions, step-by-step check-in, face registration, report |
 | `app/kiosk/` | Rotating campus code for the wall display |
 | `app/utils/` | Pure business logic: `schedule`, `status`, `student_status`, `validation`, `authz`, `email`, `uploads`… |
 | `app/importers/` | One-off Excel/roster import commands |
@@ -60,9 +60,18 @@ Stateless JWT (8 h, `Authorization: Bearer`). Because every request re-reads the
 
 **Lecturer** (once a day). `POST /api/attendance/checkin` → find today's classes from the timetable (respecting `no_class_dates`) → reject if none or already checked in → verify campus presence per `verification_mode` (rotating kiosk code and/or distance from the campus point) → compute status against the *first* class's start (`on_time` / `late` / `absent`) → store. `checkout` compares against the *last* class's end (`left_early`), and the scheduler later flags `no_checkout`.
 
-**Student** (per session). `POST /api/student/checkin` → the session must belong to the student's batch and run today → check-in window (30 min before → end of session) → block if the course's absences have reached the threshold (records an absence and returns a `403` with the stats) → verify the lecturer's class code (7 s TOTP) and location → compute `on_time`/`late`.
+**Student** (per session, step by step). The lecturer's class-code screen shows a QR code for one class session: `/student-checkin?s=<token>`, where the token is the signed `(timetable_id, date)` (`utils/checkin_session.py`). After signing in:
 
-**Verification** codes are TOTP values (`pyotp`): the kiosk code changes every 60 s (URL guarded by `KIOSK_ACCESS_KEY`), the class code every 7 s (shown only to signed-in lecturers). Each accepts ±1 window for clock drift.
+1. `POST /api/student/checkin/start {s}`: the session must belong to the student's batch (otherwise a `403` "belongs to another class"), run today, be inside the check-in window (30 min before → end), not be checked in already, and the course must not be blocked by absences (records an absence and returns a `403` with the stats). Returns a signed **ticket**.
+2. `POST …/code {ticket, code}`: the session's own class code (below).
+3. `POST …/location {ticket, lat, lng}`: distance from the campus point ≤ `campus_radius_m`. The student then taps **Confirm**.
+4. `POST …/complete` (multipart: `ticket`, `frontal`, `turned`): live face scan. The head must turn in the direction the ticket chose (left/right), both frames must be one face, and the frontal face must match the student's registered face (cosine similarity ≥ `face_match_threshold`). Failures are logged in `face_check_attempts`; after `face_max_attempts_per_session` the session is locked and the lecturer records attendance manually. On success → `on_time`/`late`.
+
+The ticket (5 min, bound to the student and session) records which steps passed, so the fast-rotating code need not still be valid at the end. `student_verification_mode` and `student_face_verification` decide which steps apply.
+
+**Faces** (`utils/face.py`): OpenCV YuNet detector + SFace recognizer on the CPU (~80 ms per frame, ~150 MB RAM), at most two jobs at once. Registration (at sign-up via a signed enroll token, or `POST /api/student/face` after sign-in) takes three frontal frames and one head-turned frame, rejects a face already registered to another account, and stores only the embeddings (`student_faces`) plus a profile photo crop. Admins can reset a face (`DELETE /api/admin/students/<id>/face`).
+
+**Verification** codes are TOTP values (`pyotp`): the kiosk code changes every 60 s (URL guarded by `KIOSK_ACCESS_KEY`). The class code (6 digits, every 20 s, shown only to signed-in lecturers) uses a separate secret per class session derived from `STUDENT_CODE_TOTP_SECRET`, so one batch's code is useless in another's session. Each accepts ±1 window for clock drift.
 
 ## Scheduler (in-process, single worker)
 

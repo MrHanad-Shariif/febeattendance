@@ -4,6 +4,7 @@ from datetime import datetime, date
 from calendar import monthrange
 
 from flask import request, jsonify, Response, current_app
+from sqlalchemy.orm import joinedload
 
 from app.admin import admin_bp
 from app.extensions import db
@@ -400,13 +401,6 @@ def checkin_qr_code():
     return Response(png, mimetype="image/png")
 
 
-@admin_bp.get("/student-qrcode.png")
-@roles_required("admin")
-def student_checkin_qr_code():
-    png = generate_qr_png(current_app.config["STUDENT_CHECKIN_URL"], "student")
-    return Response(png, mimetype="image/png")
-
-
 @admin_bp.get("/kiosk-url")
 @roles_required("admin")
 def kiosk_url():
@@ -427,7 +421,7 @@ def list_students():
         query = query.filter_by(batch=batch)
     if department:
         query = query.filter_by(department=department)
-    students = query.order_by(User.name).all()
+    students = query.options(joinedload(User.face)).order_by(User.name).all()
     return jsonify([s.to_dict() for s in students])
 
 
@@ -467,6 +461,19 @@ def delete_student(user_id):
     db.session.delete(student)
     db.session.commit()
     return jsonify({"message": "Deleted"})
+
+
+@admin_bp.delete("/students/<int:user_id>/face")
+@roles_required("admin")
+def reset_student_face(user_id):
+    """Remove a student's registered face (e.g. wrong person enrolled, or a
+    big change in appearance). They're asked to register again at next login."""
+    student = User.query.filter_by(id=user_id, role="student").first_or_404()
+    if student.face is None:
+        return jsonify({"error": "This student has not registered a face"}), 404
+    db.session.delete(student.face)
+    db.session.commit()
+    return jsonify(student.to_dict())
 
 
 @admin_bp.get("/students/<int:user_id>/report")

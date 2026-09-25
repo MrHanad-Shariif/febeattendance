@@ -1,16 +1,19 @@
-from datetime import date
+from datetime import date, datetime
 
-from flask import jsonify, request, current_app
+from flask import Response, jsonify, request, current_app
 
 from app.lecturer import lecturer_bp
 from app.models import Attendance, Timetable, User, StudentAttendance
 from app.utils.authz import roles_required, current_user
-from app.utils.schedule import get_day_classes
+from app.utils.checkin_session import make_session_token
+from app.utils.qr import generate_qr_png
+from app.utils.schedule import get_day_classes, scheduled_datetimes, teaches_on
 from app.utils.settings import get_no_class_dates, get_all_settings
 from app.utils.today import get_today_rows
 from app.utils.student_code import current_code, seconds_remaining
 from app.utils.student_status import compute_course_stats, course_records_query
 from app.utils.student_override import apply_override
+from app.utils.validation import ValidationError
 
 
 @lecturer_bp.get("/today")
@@ -45,18 +48,76 @@ def my_history():
     return jsonify(rows)
 
 
+def _session_entry(user) -> Timetable:
+    """The timetable entry named by ?timetable_id=, if this user may show its
+    code: the lecturer who teaches it (or any admin), and only on a day it meets."""
+    timetable_id = request.args.get("timetable_id", type=int)
+    entry = Timetable.query.get(timetable_id) if timetable_id else None
+    if not entry or (user.role != "admin" and entry.lecturer_id != user.id):
+        raise ValidationError("Class session not found", status=404)
+    if not teaches_on(entry, date.today(), get_no_class_dates()):
+        raise ValidationError("This class is not scheduled today")
+    return entry
+
+
+@lecturer_bp.get("/classes-today")
+@roles_required("lecturer", "admin")
+def my_classes_today():
+    """The lecturer's class sessions today, for the class-code screen's
+    picker. The one running now (or the next one) is flagged as default.
+    Admins get every class meeting today, so they can show any session's QR
+    code (e.g. when a lecturer's laptop isn't working)."""
+    user = current_user()
+    today = date.today()
+    now = datetime.now()
+    no_class_dates = get_no_class_dates()
+    if user.role == "admin":
+        entries = sorted(
+            (e for e in Timetable.query.filter(Timetable.start_time.isnot(None)).all() if teaches_on(e, today, no_class_dates)),
+            key=lambda e: e.start_time,
+        )
+    else:
+        entries = get_day_classes(user.id, today, no_class_dates)
+    rows = []
+    for entry in entries:
+        start_dt, end_dt = scheduled_datetimes(entry, today)
+        rows.append({
+            **entry.to_dict(),
+            "scheduled_start": start_dt.isoformat() if start_dt else None,
+            "scheduled_end": end_dt.isoformat() if end_dt else None,
+            "ended": bool(end_dt and now > end_dt),
+        })
+    upcoming = [r for r in rows if not r["ended"]]
+    default_id = upcoming[0]["id"] if upcoming else (rows[-1]["id"] if rows else None)
+    return jsonify({"classes": rows, "default_timetable_id": default_id})
+
+
 @lecturer_bp.get("/class-code")
 @roles_required("lecturer", "admin")
 def class_code():
     """The rotating code a lecturer displays on their own laptop for
-    students to read and type in during check-in. Gated by the lecturer's
-    own login rather than a URL key, since only real lecturer accounts
-    should ever be able to show it."""
+    students to read and type in during check-in. Each class session has its
+    own code, so it only works for that batch's session. Gated by the
+    lecturer's own login rather than a URL key, since only real lecturer
+    accounts should ever be able to show it."""
+    entry = _session_entry(current_user())
     return jsonify({
-        "code": current_code(),
+        "code": current_code(entry.id, date.today()),
         "seconds_remaining": seconds_remaining(),
         "interval": current_app.config["STUDENT_CODE_INTERVAL_SECONDS"],
     })
+
+
+@lecturer_bp.get("/class-qr.png")
+@roles_required("lecturer", "admin")
+def class_qr():
+    """QR code for one class session, shown on the lecturer's screen. It
+    carries a signed session token, so students of another batch who scan a
+    shared photo of it are turned away."""
+    entry = _session_entry(current_user())
+    url = f"{current_app.config['STUDENT_CHECKIN_URL']}?s={make_session_token(entry.id, date.today())}"
+    png = generate_qr_png(url, "student", subtitle=f"{entry.batch or ''}  {entry.course_name}".strip())
+    return Response(png, mimetype="image/png", headers={"Cache-Control": "no-store"})
 
 
 # ---------- Student attendance for the lecturer's own courses ----------

@@ -33,6 +33,9 @@ const STUDENT_FIELD_LABELS = {
   student_late_after_minutes: "Late after (minutes)",
   student_absent_after_minutes: "Absent after (minutes)",
   student_verification_mode: "Campus verification mode",
+  student_face_verification: "Face verification",
+  face_match_threshold: "Face match strictness (0-1)",
+  face_max_attempts_per_session: "Face scan attempts per class",
   student_lates_equal_absent: "Lates that equal 1 absence",
   student_absence_threshold_percent: "Absence % that blocks check-in / flags retake",
   semester_start_date: "Semester start date (fallback estimate)",
@@ -43,7 +46,6 @@ const FIELD_LABELS = { ...LECTURER_FIELD_LABELS, ...STUDENT_FIELD_LABELS };
 const LECTURER_FIELD_ORDER = Object.keys(LECTURER_FIELD_LABELS);
 const STUDENT_FIELD_ORDER = Object.keys(STUDENT_FIELD_LABELS);
 
-const VERIFICATION_MODE_KEYS = new Set(["verification_mode", "student_verification_mode"]);
 const DATE_KEYS = new Set(["semester_start_date", "semester_end_date"]);
 const VERIFICATION_OPTIONS = [
   ["both", "Both code and location required"],
@@ -52,6 +54,14 @@ const VERIFICATION_OPTIONS = [
   ["location_only", "Location only"],
   ["off", "Off (no verification)"],
 ];
+const SELECT_OPTIONS = {
+  verification_mode: VERIFICATION_OPTIONS,
+  student_verification_mode: VERIFICATION_OPTIONS,
+  student_face_verification: [
+    ["require", "Required: live face scan must match"],
+    ["off", "Off (no face scan)"],
+  ],
+};
 
 function SettingField({ fieldKey, settings, descriptions, setSettings }) {
   const update = (value) => setSettings((s) => ({ ...s, [fieldKey]: value }));
@@ -61,13 +71,13 @@ function SettingField({ fieldKey, settings, descriptions, setSettings }) {
         {FIELD_LABELS[fieldKey]}
       </Label>
       <div className="sm:col-span-2">
-        {VERIFICATION_MODE_KEYS.has(fieldKey) ? (
+        {SELECT_OPTIONS[fieldKey] ? (
           <Select value={settings[fieldKey] || undefined} onValueChange={update}>
             <SelectTrigger id={fieldKey}>
               <SelectValue placeholder="Choose a mode" />
             </SelectTrigger>
             <SelectContent>
-              {VERIFICATION_OPTIONS.map(([v, l]) => (
+              {SELECT_OPTIONS[fieldKey].map(([v, l]) => (
                 <SelectItem key={v} value={v}>
                   {l}
                 </SelectItem>

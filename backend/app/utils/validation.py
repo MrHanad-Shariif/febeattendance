@@ -164,6 +164,13 @@ def validate_settings(data: dict, current: dict) -> dict[str, str]:
             clean_int(value, key, minimum=1, maximum=100)
         elif key in ("semester_start_date", "semester_end_date"):
             parse_iso_date(value, key)
+        elif key == "student_face_verification":
+            if value not in ("require", "off"):
+                raise ValidationError("student_face_verification must be require or off")
+        elif key == "face_match_threshold":
+            _float_in_range(value, key, 0.2, 0.9)
+        elif key == "face_max_attempts_per_session":
+            clean_int(value, key, minimum=1, maximum=20)
 
         cleaned[key] = value
         merged[key] = value

@@ -4,14 +4,13 @@ import client, { apiErrorMessage } from "@/api/client";
 import StudentSessionRoster from "@/components/StudentSessionRoster.jsx";
 import { DataTable, DataTableColumnHeader } from "@/components/data-table";
 import { Alert, PageHeader } from "@/components/page-header";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 
 export default function StudentOverview() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [openSession, setOpenSession] = useState(null);
-  const [qrUrl, setQrUrl] = useState("");
 
   useEffect(() => {
     client
@@ -19,10 +18,6 @@ export default function StudentOverview() {
       .then((res) => setRows(res.data))
       .catch((err) => setError(apiErrorMessage(err)))
       .finally(() => setLoading(false));
-    client
-      .get("/admin/student-qrcode.png", { responseType: "blob" })
-      .then((res) => setQrUrl(URL.createObjectURL(res.data)))
-      .catch(() => {});
   }, []);
 
   const columns = useMemo(() => {
@@ -61,30 +56,29 @@ export default function StudentOverview() {
       num("absent", "Absent", "text-danger font-medium"),
       num("present_excused", "Excused"),
       num("not_yet", "Not yet", "text-muted-foreground"),
+      {
+        id: "qr",
+        enableHiding: false,
+        enableSorting: false,
+        header: "",
+        meta: { noExport: true, className: "w-28 text-right" },
+        cell: ({ row }) => (
+          <Button asChild variant="outline" size="sm" onClick={(e) => e.stopPropagation()}>
+            <a href={`/class-code?timetable_id=${row.original.timetable_id}`} target="_blank" rel="noreferrer">
+              <QrCode /> Show QR
+            </a>
+          </Button>
+        ),
+      },
     ];
   }, []);
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Today's student sessions" description="Select a session to view and adjust its roster." />
-
-      <Card className="sm:max-w-sm">
-        <CardHeader className="pb-2">
-          <CardTitle className="flex items-center gap-2 text-base">
-            <QrCode className="h-4 w-4 text-primary" /> Student check-in QR code (blue)
-          </CardTitle>
-          <CardDescription>
-            For students only. Print it and put it in each classroom. Lecturers who scan it get a warning.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {qrUrl ? (
-            <img src={qrUrl} alt="Student check-in QR code" className="mx-auto w-44 rounded-lg" />
-          ) : (
-            <p className="py-10 text-center text-sm text-muted-foreground">Loading...</p>
-          )}
-        </CardContent>
-      </Card>
+      <PageHeader
+        title="Today's student sessions"
+        description="Select a session to view and adjust its roster. Use Show QR to display a session's check-in QR code and class code, for example if the lecturer can't show it. Each code works only for that session's batch."
+      />
 
       {error && <Alert>{error}</Alert>}
 

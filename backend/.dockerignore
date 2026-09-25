@@ -7,3 +7,4 @@ tests/
 uploads/*
 !uploads/.gitkeep
 .flaskenv
+models/

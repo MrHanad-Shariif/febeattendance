@@ -69,6 +69,7 @@ class User(db.Model):
                 "department": self.department,
                 "batch": self.batch,
                 "photo_url": f"/api/uploads/{self.photo_filename}" if self.photo_filename else None,
+                "face_enrolled": self.face is not None,
             })
         return data
 
@@ -299,7 +300,10 @@ class Setting(db.Model):
         "no_class_dates": ("", "Comma separated dates with no classes (holidays, exams), e.g. 2026-10-01,2026-12-25."),
         "student_late_after_minutes": ("10", "A student who checks in more than this many minutes after a session's start is marked Late."),
         "student_absent_after_minutes": ("20", "A student who has not checked in this many minutes after a session's start is marked Absent."),
-        "student_verification_mode": ("both", "How campus presence is verified for student check-in: 'both', 'either', 'code_only', 'location_only', or 'off'."),
+        "student_verification_mode": ("both", "Which steps the student check-in asks for: 'both' (class code and location), 'code_only', 'location_only', or 'off'. 'either' behaves like 'both' in the step-by-step check-in."),
+        "student_face_verification": ("require", "require = students must pass a live face scan matching their registered face to check in. off = skip the face step."),
+        "face_match_threshold": ("0.40", "How similar (0 to 1) a check-in face must be to the registered face. Higher is stricter. 0.36 to 0.50 is sensible."),
+        "face_max_attempts_per_session": ("3", "Unsuccessful face scans allowed per class session before the student must see their lecturer."),
         "student_lates_equal_absent": ("2", "Every this many Late marks in one course count as one extra Absent toward the attendance percentage."),
         "student_absence_threshold_percent": ("25", "A student who has missed this percentage or more of a course's TOTAL planned sessions for the semester (not just sessions so far) is blocked from further check-ins to it and the course is flagged for retake."),
         "semester_start_date": ("2026-10-01", "First day of the current semester, used to work out each course's total planned sessions for the 25% attendance rule."),
@@ -308,6 +312,38 @@ class Setting(db.Model):
 
     def to_dict(self):
         return {"key": self.key, "value": self.value, "description": self.description}
+
+
+class StudentFace(db.Model):
+    """A student's registered face, as embedding vectors only -- never the raw
+    camera frames. Kept in its own table (rather than columns on users) so
+    `flask init-db` can create it on an existing database without a
+    migration. Removing the row (admin "Reset face") lets the student enroll
+    again at their next login."""
+    __tablename__ = "student_faces"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False)
+    embeddings = db.Column(db.LargeBinary, nullable=False)  # float32 vectors, one per enrollment frame
+    model_version = db.Column(db.String(50), nullable=False)
+    enrolled_ip = db.Column(db.String(64), nullable=True)
+    created_at = db.Column(db.DateTime, default=utcnow)
+
+    user = db.relationship("User", backref=db.backref("face", uselist=False, cascade="all, delete-orphan"))
+
+
+class FaceCheckAttempt(db.Model):
+    """Audit trail of check-in face scans; also enforces the per-session
+    attempt limit."""
+    __tablename__ = "face_check_attempts"
+
+    id = db.Column(db.Integer, primary_key=True)
+    student_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    timetable_id = db.Column(db.Integer, db.ForeignKey("timetable.id", ondelete="CASCADE"), nullable=False)
+    date = db.Column(db.Date, nullable=False)
+    result = db.Column(db.String(20), nullable=False)  # match | mismatch | no_liveness | bad_image
+    score = db.Column(db.Float, nullable=True)
+    created_at = db.Column(db.DateTime, default=utcnow)
 
 
 class PasswordResetToken(db.Model):

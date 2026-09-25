@@ -2,7 +2,9 @@ import { Navigate, useLocation } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "../context/AuthContext.jsx";
 
-export default function ProtectedRoute({ children, roles }) {
+// requireFace: students who haven't registered a face yet are sent to
+// /enroll-face first (and brought back afterwards).
+export default function ProtectedRoute({ children, roles, requireFace = true }) {
   const { user, loading } = useAuth();
   const location = useLocation();
 
@@ -14,8 +16,15 @@ export default function ProtectedRoute({ children, roles }) {
     );
   }
 
+  // Keep the query string: a scanned class QR code carries its session in ?s=.
+  const from = location.pathname + location.search;
+
   if (!user) {
-    return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+    return <Navigate to="/login" replace state={{ from }} />;
+  }
+
+  if (requireFace && user.role === "student" && user.face_enrolled === false) {
+    return <Navigate to="/enroll-face" replace state={{ from }} />;
   }
 
   if (roles && !roles.includes(user.role)) {

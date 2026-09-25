@@ -19,8 +19,10 @@ def _font(size: int):
         return ImageFont.load_default()
 
 
-def generate_qr_png(data: str, kind: str | None = None) -> bytes:
+def generate_qr_png(data: str, kind: str | None = None, subtitle: str | None = None) -> bytes:
     style = QR_STYLES.get(kind)
+    if style is not None and subtitle:
+        style = {**style, "subtitle": subtitle}
     if style is None:
         img = qrcode.make(data, box_size=10, border=2)
     else:

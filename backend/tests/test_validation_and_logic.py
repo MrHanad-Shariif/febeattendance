@@ -1,9 +1,7 @@
 """Input validation, settings, config safety and attendance business rules."""
-import io
 from datetime import date, datetime, time, timedelta
 
 import pytest
-from PIL import Image
 
 from app import create_app
 from app.config import Config, TestingConfig, validate_production_config
@@ -89,39 +87,35 @@ def test_coordinates_validation():
             parse_coords(lat, lng)
 
 
-# ---------- uploads ----------
+# ---------- student registration ----------
 
-def _png_bytes():
-    buf = io.BytesIO()
-    Image.new("RGB", (40, 40), "green").save(buf, format="PNG")
-    return buf.getvalue()
-
-
-def _register(client, photo, filename="me.png", **overrides):
-    db.session.add(Timetable(lecturer_id=make_user("lec@example.com").id, course_name="X", batch="BCE08"))
-    db.session.commit()
+def _register(client, **overrides):
+    if not Timetable.query.filter_by(batch="BCE08").first():
+        db.session.add(Timetable(lecturer_id=make_user("lec@example.com").id, course_name="X", batch="BCE08"))
+        db.session.commit()
     form = {
         "name": "New Student", "email": "new@student.test", "password": "long-enough-pass",
-        "student_id_number": "S123", "department": "Civil Engineering", "batch": "BCE08",
+        "student_id_number": "S123", "batch": "BCE08", "face_consent": "true",
         **overrides,
     }
-    form["photo"] = (io.BytesIO(photo), filename)
-    return client.post("/api/auth/register-student", data=form, content_type="multipart/form-data")
+    return client.post("/api/auth/register-student", data=form)
 
 
-def test_register_accepts_real_image_and_stores_reencoded_copy(client, app):
-    resp = _register(client, _png_bytes())
+def test_register_returns_face_enroll_token(client):
+    resp = _register(client)
     assert resp.status_code == 201, resp.json
+    assert resp.json["enroll_token"]
 
 
-def test_register_rejects_fake_image(client):
-    resp = _register(client, b"<html><script>alert(1)</script></html>", filename="evil.png")
+def test_register_requires_face_consent(client):
+    resp = _register(client, face_consent="")
     assert resp.status_code == 400
-    assert "image" in resp.json["error"].lower()
+    assert "face" in resp.json["error"].lower()
 
 
 def test_register_rejects_unknown_batch_and_department(client):
-    assert _register(client, _png_bytes(), batch="NOPE99").status_code == 400
+    assert _register(client, batch="NOPE99").status_code == 400
+    assert _register(client, email="b@student.test", student_id_number="S9", department="Nope").status_code == 400
 
 
 # ---------- attendance status rules ----------

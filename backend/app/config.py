@@ -56,13 +56,18 @@ class Config:
     # endpoint can't be read remotely by someone off campus.
     KIOSK_ACCESS_KEY = os.environ.get("KIOSK_ACCESS_KEY", "change-this-kiosk-access-key")
 
-    # Student class-code: a separate, faster-rotating code a lecturer displays
-    # on their own laptop for one session. Access to it is gated by the
-    # lecturer's own login (JWT), not a URL key, since only real lecturer
-    # accounts should ever show it.
+    # Student class-code: a rotating code a lecturer displays on their own
+    # laptop next to the session's QR code. Every class session gets its own
+    # code derived from this secret (see utils/student_code.py). Access to it
+    # is gated by the lecturer's own login (JWT), not a URL key, since only
+    # real lecturer accounts should ever show it.
     STUDENT_CODE_TOTP_SECRET = os.environ.get("STUDENT_CODE_TOTP_SECRET", "CHANGEMESTUDENTCHANGEMESTUDENT1")
-    STUDENT_CODE_INTERVAL_SECONDS = int(os.environ.get("STUDENT_CODE_INTERVAL_SECONDS", 7))
-    STUDENT_CODE_DIGITS = int(os.environ.get("STUDENT_CODE_DIGITS", 4))
+    STUDENT_CODE_INTERVAL_SECONDS = int(os.environ.get("STUDENT_CODE_INTERVAL_SECONDS", 20))
+    STUDENT_CODE_DIGITS = int(os.environ.get("STUDENT_CODE_DIGITS", 6))
+
+    # OpenCV face models (YuNet detector + SFace recognizer), downloaded into
+    # the image at build time -- see backend/Dockerfile.
+    FACE_MODEL_DIR = os.environ.get("FACE_MODEL_DIR", os.path.join(BASE_DIR, "models"))
 
     UPLOAD_FOLDER = os.environ.get("UPLOAD_FOLDER", os.path.join(BASE_DIR, "uploads"))
     MAX_CONTENT_LENGTH = 5 * 1024 * 1024  # 5MB, generous for a single profile photo

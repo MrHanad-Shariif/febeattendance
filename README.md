@@ -35,11 +35,11 @@ It replaces the faculty's Google Sheet ("Latest Lecturer Attendance") and keeps 
 **Lecturers**
 - One check-in and one check-out per day, however many classes they teach (measured against the first class's start and the last class's end).
 - Campus verification by rotating kiosk code and/or geolocation (mode is configurable).
-- Show a fast-rotating class code for students; review and correct their own students' attendance (a remark is mandatory and recorded).
+- Show each class session's own QR code and rotating 6-digit class code for students (they only work for that batch); review and correct their own students' attendance (a remark is mandatory and recorded).
 
 **Students**
-- Self-registration with email confirmation; pre-imported roster records are *claimed* by student ID.
-- Per-session check-in with the lecturer's class code plus location; personal timetable and attendance report.
+- Self-registration (full name, email, password, student ID, batch) with a live face registration and email confirmation; pre-imported roster records are *claimed* by student ID.
+- Step-by-step check-in per session: scan the lecturer's QR code → sign in → class code → location → live face scan with a head turn, matched to the registered face. Personal timetable and attendance report.
 - Automatic block and retake flag when absences reach the configured threshold (default 25 %).
 
 **Administrators**
@@ -80,6 +80,8 @@ It replaces the faculty's Google Sheet ("Latest Lecturer Attendance") and keeps 
 ## Quick start (development)
 
 Requirements: Python 3.12+, Node.js 20+, PostgreSQL 15+.
+
+Face check-in needs two OpenCV models in `backend/models/` (the Docker image downloads them automatically): [`face_detection_yunet_2023mar.onnx`](https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet) and [`face_recognition_sface_2021dec.onnx`](https://github.com/opencv/opencv_zoo/tree/main/models/face_recognition_sface). The camera only works over HTTPS or on `localhost`.
 
 ```bash
 # 1. Database (psql)

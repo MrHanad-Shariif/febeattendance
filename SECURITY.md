@@ -36,13 +36,15 @@ A full review of authentication, sessions, input validation, uploads, business l
 
 1. **Roster claiming relies only on the student ID.** Anyone who knows an imported student's ID number can register first, attach their *own* email and password, and confirm it. Mitigation today: admins can disable accounts, and photos and names are visible in Admin → Students. Recommended next step: verify a second roster fact (e.g. date of birth or mobile number from the export, stored hashed) or require admin approval for claims.
 2. **Location is self-reported.** The browser sends GPS coordinates, which a technically capable user can spoof. The rotating code is the stronger control; keep `verification_mode` on `both`.
-3. **The class code is one global code.** It is not bound to a lecturer or session, and can be relayed within its 7-second window (±1 window).
+3. **Class codes can be relayed within the class.** Each session has its own code (useless for other batches), but a student in the room can still message it to a classmate of the same batch within its ~20–40 s validity. The face step stops the classmate from checking in on someone else's account, but not a student checking in for themselves from off campus with a relayed code *and* a spoofed location.
 4. **JWTs live in `localStorage`.** A cross-site-scripting bug would expose them. The app has no inline scripts, uses no `dangerouslySetInnerHTML`, and Caddy sends a strict CSP (`script-src 'self'`), which reduces the risk.
 5. **Rate-limit counters are in process memory.** This is correct for the supported single-worker deployment; if you scale to several workers, set `RATELIMIT_STORAGE_URI` to Redis.
 6. **No audit log** of administrative actions (student status overrides record who changed them; other admin actions do not).
 7. **No migration tooling.** Tables are created with `create_all`; schema changes need manual migration. Add Alembic before changing the schema in production.
 8. **Email verification uses a GET link**, which some mail scanners pre-fetch and consume.
 9. **Imported placeholder emails** (`pending+…@example.invalid`) mark records not yet claimed; they cannot receive mail.
+10. **Face checks are not certified anti-spoofing.** The head-turn challenge defeats a held-up photo or a still image; a well-made video or a mask could still pass. Treat the face scan as strong deterrence, not proof.
+11. **Biometric data.** Students consent at registration (or on the registration screen for existing accounts). Only face embeddings are stored (`student_faces`), plus a profile photo crop from the scan; both are deleted with the account, and admins can reset a face. Check this matches your institution's data-protection rules before rollout.
 
 ## Operator checklist
 

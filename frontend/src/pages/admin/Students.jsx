@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Ban, CheckCircle2, FileText, MoreHorizontal, Trash2 } from "lucide-react";
+import { Ban, CheckCircle2, FileText, MoreHorizontal, ScanFace, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import client, { apiErrorMessage } from "@/api/client";
 import StatusBadge from "@/components/StatusBadge.jsx";
@@ -18,6 +18,7 @@ export default function Students() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [toDelete, setToDelete] = useState(null);
+  const [toResetFace, setToResetFace] = useState(null);
 
   function load() {
     setLoading(true);
@@ -44,6 +45,16 @@ export default function Students() {
     try {
       await client.delete(`/admin/students/${s.id}`);
       toast.success(`${s.name} deleted`);
+      load();
+    } catch (err) {
+      toast.error(apiErrorMessage(err));
+    }
+  }
+
+  async function handleResetFace(s) {
+    try {
+      await client.delete(`/admin/students/${s.id}/face`);
+      toast.success(`${s.name}'s face was reset. They'll register it again at their next sign-in.`);
       load();
     } catch (err) {
       toast.error(apiErrorMessage(err));
@@ -94,6 +105,21 @@ export default function Students() {
         cell: ({ getValue }) => getValue() || "—",
       },
       {
+        id: "face",
+        accessorFn: (r) => (r.face_enrolled ? "registered" : "missing"),
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Face" />,
+        meta: { label: "Face" },
+        filterFn: "equalsString",
+        cell: ({ row }) =>
+          row.original.face_enrolled ? (
+            <span className="inline-flex items-center gap-1.5 text-sm text-success">
+              <ScanFace className="h-4 w-4" /> Registered
+            </span>
+          ) : (
+            <span className="text-sm text-muted-foreground">Not yet</span>
+          ),
+      },
+      {
         accessorKey: "status",
         header: ({ column }) => <DataTableColumnHeader column={column} title="Status" />,
         meta: { label: "Status" },
@@ -130,6 +156,11 @@ export default function Students() {
                     <CheckCircle2 /> Enable
                   </DropdownMenuItem>
                 )}
+                {s.face_enrolled && (
+                  <DropdownMenuItem onSelect={() => setToResetFace(s)}>
+                    <ScanFace /> Reset face
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => setToDelete(s)}>
                   <Trash2 /> Delete
@@ -159,6 +190,14 @@ export default function Students() {
           { columnId: "batch", label: "Batch" },
           { columnId: "department", label: "Department" },
           {
+            columnId: "face",
+            label: "Face",
+            options: [
+              { value: "registered", label: "Registered" },
+              { value: "missing", label: "Not yet" },
+            ],
+          },
+          {
             columnId: "status",
             label: "Status",
             options: [
@@ -178,6 +217,15 @@ export default function Students() {
         description="This deletes the student and all their attendance history. This cannot be undone."
         confirmLabel="Delete"
         onConfirm={() => handleDelete(toDelete)}
+      />
+
+      <ConfirmDialog
+        open={!!toResetFace}
+        onOpenChange={(o) => !o && setToResetFace(null)}
+        title={`Reset ${toResetFace?.name}'s face?`}
+        description="Their registered face is deleted. They can't check in until they register their face again, which they'll be asked to do at their next sign-in."
+        confirmLabel="Reset face"
+        onConfirm={() => handleResetFace(toResetFace)}
       />
     </div>
   );

@@ -1,13 +1,10 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { AlertTriangle, CalendarOff, Clock, DoorOpen, LogIn, User } from "lucide-react";
-import { toast } from "sonner";
+import { AlertTriangle, CalendarOff, Clock, DoorOpen, QrCode, User } from "lucide-react";
 import client, { apiErrorMessage } from "@/api/client";
 import StatusBadge from "@/components/StatusBadge.jsx";
-import VerifyModal from "@/components/VerifyModal.jsx";
 import { Alert, PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn, formatTime } from "@/lib/utils";
@@ -24,11 +21,6 @@ export default function StudentDashboard() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
-  const [modalRow, setModalRow] = useState(null);
-  const [submitting, setSubmitting] = useState(false);
-  const [modalError, setModalError] = useState("");
-  const [blockNotice, setBlockNotice] = useState(null);
-
   async function load(initial = false) {
     if (initial) setLoading(true);
     try {
@@ -48,46 +40,12 @@ export default function StudentDashboard() {
     return () => clearInterval(interval);
   }, []);
 
-  async function handleVerify({ code, lat, lng }) {
-    setSubmitting(true);
-    setModalError("");
-    try {
-      await client.post("/student/checkin", { timetable_id: modalRow.timetable_id, code, lat, lng });
-      toast.success("Checked in");
-      setModalRow(null);
-      load();
-    } catch (err) {
-      if (err.response?.status === 403 && err.response.data?.course_stats) {
-        setModalRow(null);
-        setBlockNotice(err.response.data.error);
-        load();
-      } else {
-        setModalError(apiErrorMessage(err, "Verification failed"));
-      }
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
   return (
     <div className="space-y-6">
       <PageHeader
         title="Today"
-        description="Scan the QR code posted in your classroom, read the code from your lecturer's screen, and allow location to check in."
+        description="To check in, scan the QR code on your lecturer's screen during class, then follow the steps."
       />
-
-      {blockNotice && (
-        <div className="flex items-start gap-3 rounded-lg border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-          <div>
-            <p className="font-semibold">Check-in blocked</p>
-            <p className="mt-1">{blockNotice}</p>
-            <button onClick={() => setBlockNotice(null)} className="mt-2 text-xs font-medium underline">
-              Dismiss
-            </button>
-          </div>
-        </div>
-      )}
 
       {loadError && <Alert>{loadError}</Alert>}
 
@@ -143,16 +101,17 @@ export default function StudentDashboard() {
                   )}
 
                   <div className="mt-4 flex flex-wrap items-center gap-4">
-                    <Button
-                      disabled={!canCheckIn}
-                      onClick={() => {
-                        setModalError("");
-                        setModalRow(row);
-                      }}
-                    >
-                      <LogIn /> Check in
-                    </Button>
-                    <span className="text-sm text-muted-foreground">Checked in: {formatTime(row.checkin_at)}</span>
+                    {row.blocked ? (
+                      <span className="flex items-center gap-2 text-sm text-danger">
+                        <AlertTriangle className="h-4 w-4" /> Check-in blocked: your absences in this course reached the limit.
+                      </span>
+                    ) : canCheckIn ? (
+                      <span className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <QrCode className="h-4 w-4 text-primary" /> Scan the QR code on your lecturer's screen to check in.
+                      </span>
+                    ) : (
+                      <span className="text-sm text-muted-foreground">Checked in: {formatTime(row.checkin_at)}</span>
+                    )}
                     {row.remarks && <span className="text-sm text-muted-foreground/80">Note: {row.remarks}</span>}
                   </div>
                 </Card>
@@ -162,19 +121,6 @@ export default function StudentDashboard() {
         </div>
       )}
 
-      {modalRow && (
-        <VerifyModal
-          title={`Check in - ${modalRow.course_name}`}
-          actionLabel="Check in"
-          onCancel={() => setModalRow(null)}
-          onSubmit={handleVerify}
-          submitting={submitting}
-          error={modalError}
-          codePlaceholder="4-digit code from your lecturer's screen"
-          codeMaxLength={4}
-          helperText="Confirm you are on campus: enter the code your lecturer is showing on their laptop, and allow location access."
-        />
-      )}
     </div>
   );
 }

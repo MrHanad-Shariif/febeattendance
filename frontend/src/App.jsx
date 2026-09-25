@@ -18,6 +18,8 @@ import ClassCode from "./pages/lecturer/ClassCode.jsx";
 import LecturerStudentAttendance from "./pages/lecturer/StudentAttendance.jsx";
 
 import StudentDashboard from "./pages/student/Dashboard.jsx";
+import StudentCheckIn from "./pages/student/CheckIn.jsx";
+import EnrollFace from "./pages/student/EnrollFace.jsx";
 import StudentTimetable from "./pages/student/Timetable.jsx";
 import StudentReport from "./pages/student/Report.jsx";
 
@@ -67,6 +69,14 @@ export default function App() {
       {/* Standalone (no app chrome) */}
       <Route path="/print/student-report/:id" element={guard(["admin"], <StudentReportPrint />)} />
       <Route path="/class-code" element={guard(["lecturer", "admin"], <ClassCode />)} />
+      <Route
+        path="/enroll-face"
+        element={
+          <ProtectedRoute roles={["student"]} requireFace={false}>
+            <EnrollFace />
+          </ProtectedRoute>
+        }
+      />
 
       {/* Everything else lives inside the sidebar layout */}
       <Route element={guard(undefined, <AppLayout />)}>
@@ -78,7 +88,7 @@ export default function App() {
         <Route path="/my-students" element={guard(["lecturer"], <LecturerStudentAttendance />)} />
 
         {/* Student */}
-        <Route path="/student-checkin" element={<QrLanding role="student"><StudentDashboard /></QrLanding>} />
+        <Route path="/student-checkin" element={<QrLanding role="student"><StudentCheckIn /></QrLanding>} />
         <Route path="/student-timetable" element={guard(["student"], <StudentTimetable />)} />
         <Route path="/student-report" element={guard(["student"], <StudentReport />)} />
 
