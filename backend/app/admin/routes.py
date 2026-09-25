@@ -396,14 +396,14 @@ def export_attendance():
 @admin_bp.get("/qrcode.png")
 @roles_required("admin")
 def checkin_qr_code():
-    png = generate_qr_png(current_app.config["CHECKIN_URL"])
+    png = generate_qr_png(current_app.config["CHECKIN_URL"], "lecturer")
     return Response(png, mimetype="image/png")
 
 
 @admin_bp.get("/student-qrcode.png")
 @roles_required("admin")
 def student_checkin_qr_code():
-    png = generate_qr_png(current_app.config["STUDENT_CHECKIN_URL"])
+    png = generate_qr_png(current_app.config["STUDENT_CHECKIN_URL"], "student")
     return Response(png, mimetype="image/png")
 
 

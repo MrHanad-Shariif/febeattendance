@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { LogIn } from "lucide-react";
 import client, { apiErrorMessage } from "@/api/client";
 import { useAuth } from "@/context/AuthContext.jsx";
@@ -16,6 +16,7 @@ export default function Login() {
   const [submitting, setSubmitting] = useState(false);
   const { login } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -24,7 +25,11 @@ export default function Login() {
     try {
       const res = await client.post("/auth/login", { email, password });
       login(res.data.access_token, res.data.user);
-      navigate(res.data.user.role === "admin" ? "/admin" : "/");
+      // Return to the page a scanned QR code opened (e.g. /checkin), so a wrong-code
+      // scan is still caught after signing in.
+      const from = location.state?.from;
+      const safeFrom = typeof from === "string" && from.startsWith("/") && !from.startsWith("//") ? from : null;
+      navigate(safeFrom || (res.data.user.role === "admin" ? "/admin" : "/"));
     } catch (err) {
       setError(apiErrorMessage(err, "Login failed"));
     } finally {

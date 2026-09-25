@@ -43,7 +43,7 @@ The smaller `stdsRegistered…060313.xls` file is a subset of the larger one and
 ## Known gaps after import
 
 - **Combined batches.** Sheets `BTE13&BEE11` and `BTE14&BEE12` cover two batches each and are stored as one combined batch code. Students are matched to classes by exact batch code, so students in `BTE13` or `BEE11` do not yet see those classes. Splitting the rows per batch fixes this, at the cost of showing the class twice to its lecturer.
-- **Batches without a timetable sheet** (`BARE02`, `BCE07`, `BTE10`) have students but no classes; they also do not appear in the sign-up batch dropdown, which is built from the timetable.
+- **Batches without a timetable sheet** (`BARE02`, `BCE07`, `BTE10`) were imported with students but no classes. Their students were deleted after import; re-running `flask import-students` would bring them back.
 - **About a third of classes (19 of 54) have no room** in the source workbook. Fill them in under **Admin → Timetable**.
 - **Lecturers without classes** (21 of 39) have no confirmed sessions yet.
 

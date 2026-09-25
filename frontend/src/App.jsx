@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { useAuth } from "./context/AuthContext.jsx";
 import ProtectedRoute from "./components/ProtectedRoute.jsx";
+import WrongQrCode from "./components/WrongQrCode.jsx";
 import AppLayout from "./components/layout/AppLayout.jsx";
 
 import Login from "./pages/auth/Login.jsx";
@@ -44,6 +45,14 @@ function guard(roles, element) {
   return <ProtectedRoute roles={roles}>{element}</ProtectedRoute>;
 }
 
+// Target of a printed check-in QR code. Scanning the other group's code shows
+// a warning instead of silently redirecting.
+function QrLanding({ role, children }) {
+  const { user } = useAuth();
+  if (user && user.role !== role) return <WrongQrCode intendedFor={role} />;
+  return children;
+}
+
 export default function App() {
   return (
     <Routes>
@@ -64,12 +73,12 @@ export default function App() {
         <Route path="/" element={<Home />} />
 
         {/* Lecturer */}
-        <Route path="/checkin" element={guard(["lecturer"], <Dashboard />)} />
+        <Route path="/checkin" element={<QrLanding role="lecturer"><Dashboard /></QrLanding>} />
         <Route path="/history" element={guard(["lecturer"], <History />)} />
         <Route path="/my-students" element={guard(["lecturer"], <LecturerStudentAttendance />)} />
 
         {/* Student */}
-        <Route path="/student-checkin" element={guard(["student"], <StudentDashboard />)} />
+        <Route path="/student-checkin" element={<QrLanding role="student"><StudentDashboard /></QrLanding>} />
         <Route path="/student-timetable" element={guard(["student"], <StudentTimetable />)} />
         <Route path="/student-report" element={guard(["student"], <StudentReport />)} />
 

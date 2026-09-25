@@ -119,13 +119,13 @@ export default function Overview() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-base">
-              <QrCode className="h-4 w-4 text-primary" /> Check-in QR code
+              <QrCode className="h-4 w-4 text-primary" /> Lecturer check-in QR code (green)
             </CardTitle>
-            <CardDescription>Print this and place it on tables or in rooms.</CardDescription>
+            <CardDescription>For lecturers only. Print it and put it where lecturers arrive. Students who scan it get a warning.</CardDescription>
           </CardHeader>
           <CardContent>
             {qrUrl ? (
-              <img src={qrUrl} alt="Check-in QR code" className="mx-auto h-40 w-40 rounded-lg bg-white p-2" />
+              <img src={qrUrl} alt="Lecturer check-in QR code" className="mx-auto w-44 rounded-lg" />
             ) : (
               <p className="py-10 text-center text-sm text-muted-foreground">Loading...</p>
             )}

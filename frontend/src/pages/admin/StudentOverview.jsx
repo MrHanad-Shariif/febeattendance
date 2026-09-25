@@ -71,15 +71,15 @@ export default function StudentOverview() {
       <Card className="sm:max-w-sm">
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center gap-2 text-base">
-            <QrCode className="h-4 w-4 text-primary" /> Student check-in QR code
+            <QrCode className="h-4 w-4 text-primary" /> Student check-in QR code (blue)
           </CardTitle>
           <CardDescription>
-            Print this and place it in each classroom. Every lecturer teaching that batch shares the same code.
+            For students only. Print it and put it in each classroom. Lecturers who scan it get a warning.
           </CardDescription>
         </CardHeader>
         <CardContent>
           {qrUrl ? (
-            <img src={qrUrl} alt="Student check-in QR code" className="mx-auto h-40 w-40 rounded-lg bg-white p-2" />
+            <img src={qrUrl} alt="Student check-in QR code" className="mx-auto w-44 rounded-lg" />
           ) : (
             <p className="py-10 text-center text-sm text-muted-foreground">Loading...</p>
           )}
