@@ -12,6 +12,7 @@ from app.utils.constants import DEPARTMENTS
 from app.utils.email import send_password_reset_email, send_verification_email
 from app.utils.checkin_session import load_enroll_token, make_enroll_token
 from app.utils.face_enrollment import enroll_student_face
+from app.utils.permissions import capabilities
 from app.utils.validation import ValidationError, check_password, clean_email, clean_text
 
 # Compared against when the email is unknown, so "no such user" takes as long
@@ -73,7 +74,7 @@ def login():
     if user.status != "active":
         return jsonify({"error": "This account is disabled. Contact the faculty office."}), 403
 
-    return jsonify({"access_token": issue_token(user), "user": user.to_dict()})
+    return jsonify({"access_token": issue_token(user), "user": {**user.to_dict(), "capabilities": capabilities(user)}})
 
 
 @auth_bp.get("/batches")
@@ -211,7 +212,8 @@ def resend_verification():
 @auth_bp.get("/me")
 @roles_required()
 def me():
-    return jsonify(current_user().to_dict())
+    user = current_user()
+    return jsonify({**user.to_dict(), "capabilities": capabilities(user)})
 
 
 @auth_bp.post("/change-password")

@@ -70,7 +70,7 @@ class Config:
     FACE_MODEL_DIR = os.environ.get("FACE_MODEL_DIR", os.path.join(BASE_DIR, "models"))
 
     UPLOAD_FOLDER = os.environ.get("UPLOAD_FOLDER", os.path.join(BASE_DIR, "uploads"))
-    MAX_CONTENT_LENGTH = 5 * 1024 * 1024  # 5MB, generous for a single profile photo
+    MAX_CONTENT_LENGTH = 15 * 1024 * 1024  # 15MB: meeting minutes / agenda PDFs (photos are re-encoded smaller)
 
     MAIL_SERVER = os.environ.get("MAIL_SERVER", "smtp.gmail.com")
     MAIL_PORT = int(os.environ.get("MAIL_PORT", 587))

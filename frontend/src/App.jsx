@@ -35,12 +35,40 @@ import StudentReports from "./pages/admin/StudentReports.jsx";
 import StudentOverview from "./pages/admin/StudentOverview.jsx";
 
 import StudentReportPrint from "./pages/reports/StudentReportPrint.jsx";
+import MinutesPrint from "./pages/reports/MinutesPrint.jsx";
+import ReportPrint from "./pages/reports/ReportPrint.jsx";
+
+// Committees & task management module
+import CommitteeList from "./pages/committees/CommitteeList.jsx";
+import CommitteeDetail from "./pages/committees/CommitteeDetail.jsx";
+import MyTasks from "./pages/tasks/MyTasks.jsx";
+import TaskDetail from "./pages/tasks/TaskDetail.jsx";
+import Meetings from "./pages/meetings/Meetings.jsx";
+import MeetingDetail from "./pages/meetings/MeetingDetail.jsx";
+import MinutesArchive from "./pages/minutes/MinutesArchive.jsx";
+import MinutesDetail from "./pages/minutes/MinutesDetail.jsx";
+import PublishMinutes from "./pages/minutes/PublishMinutes.jsx";
+import InformationSharing from "./pages/notices/InformationSharing.jsx";
+import NoticeDetail from "./pages/notices/NoticeDetail.jsx";
+import Notifications from "./pages/notices/Notifications.jsx";
+import CommitteeReports from "./pages/reports/CommitteeReports.jsx";
+import FacultyOverview from "./pages/faculty/FacultyOverview.jsx";
+import AdminCommittees from "./pages/admin/Committees.jsx";
+import FacultyRoles from "./pages/admin/FacultyRoles.jsx";
+
+import { WithCommitteeSummary } from "./components/committees/NotificationBell.jsx";
+
+const STAFF = ["admin", "lecturer"];
 
 function Home() {
   const { user } = useAuth();
   if (user?.role === "admin") return <Navigate to="/admin" replace />;
   if (user?.role === "student") return <StudentDashboard />;
-  return <Dashboard />;
+  return (
+    <WithCommitteeSummary>
+      <Dashboard />
+    </WithCommitteeSummary>
+  );
 }
 
 function guard(roles, element) {
@@ -68,6 +96,8 @@ export default function App() {
 
       {/* Standalone (no app chrome) */}
       <Route path="/print/student-report/:id" element={guard(["admin"], <StudentReportPrint />)} />
+      <Route path="/print/minutes/:id" element={guard(STAFF, <MinutesPrint />)} />
+      <Route path="/print/report" element={guard(STAFF, <ReportPrint />)} />
       <Route path="/class-code" element={guard(["lecturer", "admin"], <ClassCode />)} />
       <Route
         path="/enroll-face"
@@ -93,7 +123,7 @@ export default function App() {
         <Route path="/student-report" element={guard(["student"], <StudentReport />)} />
 
         {/* Admin */}
-        <Route path="/admin" element={guard(["admin"], <AdminDashboard />)} />
+        <Route path="/admin" element={guard(["admin"], <WithCommitteeSummary><AdminDashboard /></WithCommitteeSummary>)} />
         <Route path="/admin/overview" element={guard(["admin"], <Overview />)} />
         <Route path="/admin/lecturers" element={guard(["admin"], <Lecturers />)} />
         <Route path="/admin/timetable" element={guard(["admin"], <Timetable />)} />
@@ -103,6 +133,27 @@ export default function App() {
         <Route path="/admin/students/:id/report" element={guard(["admin"], <AdminStudentReport />)} />
         <Route path="/admin/student-overview" element={guard(["admin"], <StudentOverview />)} />
         <Route path="/admin/student-reports" element={guard(["admin"], <StudentReports />)} />
+        <Route path="/admin/committees" element={guard(["admin"], <AdminCommittees />)} />
+        <Route path="/admin/faculty-roles" element={guard(["admin"], <FacultyRoles />)} />
+
+        {/* Committees & task management (lecturers and staff; the API checks each role) */}
+        <Route path="/committees" element={guard(STAFF, <CommitteeList scope="mine" />)} />
+        <Route path="/committees/all" element={guard(STAFF, <CommitteeList scope="all" />)} />
+        <Route path="/committees/:id" element={guard(STAFF, <CommitteeDetail />)} />
+        <Route path="/administration" element={guard(STAFF, <CommitteeList scope="administration" />)} />
+        <Route path="/tasks" element={guard(STAFF, <MyTasks scope="mine" />)} />
+        <Route path="/tasks/monitor" element={guard(STAFF, <MyTasks scope="managed" />)} />
+        <Route path="/tasks/:id" element={guard(STAFF, <TaskDetail />)} />
+        <Route path="/meetings" element={guard(STAFF, <Meetings />)} />
+        <Route path="/meetings/:id" element={guard(STAFF, <MeetingDetail />)} />
+        <Route path="/meeting-minutes" element={guard(STAFF, <MinutesArchive />)} />
+        <Route path="/meeting-minutes/publish" element={guard(STAFF, <PublishMinutes />)} />
+        <Route path="/meeting-minutes/:id" element={guard(STAFF, <MinutesDetail />)} />
+        <Route path="/information" element={guard(STAFF, <InformationSharing />)} />
+        <Route path="/information/:id" element={guard(STAFF, <NoticeDetail />)} />
+        <Route path="/notifications" element={guard(STAFF, <Notifications />)} />
+        <Route path="/committee-reports" element={guard(STAFF, <CommitteeReports />)} />
+        <Route path="/faculty" element={guard(STAFF, <FacultyOverview />)} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

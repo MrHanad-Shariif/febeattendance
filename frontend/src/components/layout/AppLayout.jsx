@@ -18,7 +18,8 @@ import {
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { cn, initials } from "@/lib/utils";
-import { NAV_BY_ROLE, flattenNav } from "./nav-config";
+import { NotificationBell } from "@/components/committees/NotificationBell.jsx";
+import { buildNav, flattenNav } from "./nav-config";
 import { SidebarContent } from "./sidebar";
 
 const ROLE_LABELS = { admin: "Admin", lecturer: "Lecturer", student: "Student" };
@@ -57,7 +58,7 @@ export default function AppLayout() {
   });
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  const items = NAV_BY_ROLE[user?.role] || NAV_BY_ROLE.lecturer;
+  const items = buildNav(user);
 
   useEffect(() => {
     try {
@@ -112,6 +113,7 @@ export default function AppLayout() {
               <Breadcrumbs items={items} />
             </div>
 
+            {user?.role !== "student" && <NotificationBell />}
             <ThemeToggle />
 
             <DropdownMenu>

@@ -169,6 +169,9 @@ def validate_settings(data: dict, current: dict) -> dict[str, str]:
                 raise ValidationError("student_face_verification must be require or off")
         elif key == "face_match_threshold":
             _float_in_range(value, key, 0.2, 0.9)
+        elif key == "dean_task_override":
+            if value not in ("on", "off"):
+                raise ValidationError("dean_task_override must be on or off")
         elif key == "face_max_attempts_per_session":
             clean_int(value, key, minimum=1, maximum=20)
 
@@ -191,3 +194,26 @@ def _float_in_range(value: str, key: str, low: float, high: float):
         raise ValidationError(f"{key} must be a number")
     if not (low <= number <= high):
         raise ValidationError(f"{key} must be between {low} and {high}")
+
+
+def parse_deadline(value, field: str = "Deadline") -> datetime | None:
+    """Accept 'YYYY-MM-DD' (end of that day) or 'YYYY-MM-DDTHH:MM[:SS]'."""
+    if value in (None, ""):
+        return None
+    text = str(value).strip()
+    try:
+        if len(text) == 10:
+            return datetime.combine(date.fromisoformat(text), datetime.max.time()).replace(microsecond=0)
+        return datetime.fromisoformat(text).replace(tzinfo=None, microsecond=0)
+    except ValueError:
+        raise ValidationError(f"{field} must be a date (YYYY-MM-DD) or date and time (YYYY-MM-DDTHH:MM)")
+
+
+def clean_choice(value, field: str, choices, *, default=None):
+    if value in (None, ""):
+        if default is None:
+            raise ValidationError(f"{field} is required")
+        return default
+    if value not in choices:
+        raise ValidationError(f"{field} must be one of: {', '.join(choices)}")
+    return value

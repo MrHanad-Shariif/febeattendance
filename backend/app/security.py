@@ -72,7 +72,7 @@ def _register_error_handlers(app):
             403: "Forbidden",
             404: "Not found",
             405: "Method not allowed",
-            413: "Upload is too large (max 5 MB)",
+            413: "Upload is too large (max 15 MB)",
             429: "Too many requests. Please wait a moment and try again.",
         }
         return jsonify({"error": messages.get(err.code, err.description)}), err.code

@@ -41,6 +41,11 @@ The SPA and API share one origin in production (`/api`), so no CORS is involved;
 | `app/student/` | Timetable, today's sessions, step-by-step check-in, face registration, report |
 | `app/kiosk/` | Rotating campus code for the wall display |
 | `app/utils/` | Pure business logic: `schedule`, `status`, `student_status`, `validation`, `authz`, `email`, `uploads`… |
+| `app/committees/` | Committees, members, faculty roles (Dean, Administration Team), committee tasks + attachments |
+| `app/meetings/` | Meeting scheduling/agendas, minutes publishing and the minutes archive |
+| `app/notices/` | Information Sharing (faculty notices) |
+| `app/notifications/` | The signed-in user's in-app notifications |
+| `app/reports/` | Committee task/activity reports (JSON + CSV) and the Dean's faculty overview |
 | `app/importers/` | One-off Excel/roster import commands |
 | `app/jobs.py` | Scheduled tasks (every 1–2 min) |
 
@@ -81,6 +86,8 @@ The ticket (5 min, bound to the student and session) records which steps passed,
 | `mark_no_checkouts` | 2 min | Checked in, never out, `no_checkout_after_minutes` after the last class → `no_checkout` (today **and earlier days**) |
 | `send_checkin_reminders` | 1 min | Email lecturers not yet checked in shortly before class |
 | `mark_student_absentees` | 2 min | Students with no check-in after `student_absent_after_minutes` → `absent` |
+| `flush_email_outbox` | 1 min | Sends up to 50 queued committee/notice emails (3 attempts each) |
+| `task_deadline_sweep` | 15 min | 24 h deadline reminder, and a one-time overdue notice to the assignee and chairperson |
 
 All timestamps are naive **campus-local** datetimes; `APP_TIMEZONE` fixes the process time zone so this is correct on a UTC server.
 
@@ -97,6 +104,19 @@ erDiagram
 ```
 
 `USER.role` is `admin | lecturer | student`; `USER.status` is `invited | pending_verification | active | disabled`. Uniqueness is enforced in the database (`(lecturer_id, date)`, `(student_id, timetable_id, date)`), and the API converts races into `409`.
+
+## Committees & task management module
+
+An extension of the same app: same logins, `users` rows, email and branding.
+
+- **One account, many roles.** `User.role` is unchanged (`admin | lecturer | student`). Extra responsibilities are data: `faculty_roles` (`dean`, `admin_team`) and `committee_members` (`member` / `chairperson`, mirrored in `committees.chairperson_id`). The Administration Team is a committee with `kind='administration'`, so it reuses tasks, meetings and minutes.
+- **Permissions** live in `utils/permissions.py` and are checked on the server for every request, against the record being acted on. Only a committee's chairperson manages its tasks and meetings; being a member, the Dean or an admin does not grant that, unless an admin turns on the `dean_task_override` setting. Admins alone create committees and assign chairpersons and members. Administration Team members and admins publish minutes. The Dean, admins and the Administration Team share faculty information. `/auth/me` returns a `capabilities` block that the SPA uses to build its menu. It is for display only.
+- **Audit trail.** Every task change writes a `task_events` row (`utils/task_audit.record_event`): created, assigned, edited, deadline changed, reassigned, status changed, completed, file uploaded, notification sent.
+- **Notifications & email.** `utils/notify.notify()` writes `notifications` rows and queues `email_outbox` rows addressed to each user's stored email. It uses the fixed subject lines, e.g. `New Task Assigned – …` and `FEBE Meeting Minutes Published – …`. The scheduler sends the queue.
+- **Minutes ↔ Information Sharing.** Publishing minutes stores the release time, archives them in `meeting_minutes`, and creates a linked `information_posts` row (category `meeting_minutes`). That row notifies the committee, or all staff for faculty-wide minutes.
+- **Documents** (agendas, minutes, task evidence, notices) are stored under `uploads/private/…` and checked by content. They are served only by per-record routes that re-check permission. The generic `/api/uploads/…` route refuses `private/`.
+- **Printable output.** `/print/minutes/:id` and `/print/report` use the existing logo and the "Faculty of Engineering and Built Environment (FEBE)" letterhead, and are printed or saved as PDF from the browser. Reports also download as CSV.
+- New tables are created by `flask init-db` (`db.create_all`), which never drops or alters existing tables.
 
 ## Frontend
 

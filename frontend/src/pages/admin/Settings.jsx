@@ -42,9 +42,14 @@ const STUDENT_FIELD_LABELS = {
   semester_end_date: "Semester end date (fallback estimate)",
 };
 
-const FIELD_LABELS = { ...LECTURER_FIELD_LABELS, ...STUDENT_FIELD_LABELS };
+const COMMITTEE_FIELD_LABELS = {
+  dean_task_override: "Dean may manage any committee",
+};
+
+const FIELD_LABELS = { ...LECTURER_FIELD_LABELS, ...STUDENT_FIELD_LABELS, ...COMMITTEE_FIELD_LABELS };
 const LECTURER_FIELD_ORDER = Object.keys(LECTURER_FIELD_LABELS);
 const STUDENT_FIELD_ORDER = Object.keys(STUDENT_FIELD_LABELS);
+const COMMITTEE_FIELD_ORDER = Object.keys(COMMITTEE_FIELD_LABELS);
 
 const DATE_KEYS = new Set(["semester_start_date", "semester_end_date"]);
 const VERIFICATION_OPTIONS = [
@@ -60,6 +65,10 @@ const SELECT_OPTIONS = {
   student_face_verification: [
     ["require", "Required: live face scan must match"],
     ["off", "Off (no face scan)"],
+  ],
+  dean_task_override: [
+    ["off", "Off: only each committee's chairperson"],
+    ["on", "On: the Dean may also assign tasks and schedule meetings"],
   ],
 };
 
@@ -193,6 +202,7 @@ export default function Settings() {
         <TabsList>
           <TabsTrigger value="lecturer">Lecturer rules</TabsTrigger>
           <TabsTrigger value="student">Student rules</TabsTrigger>
+          <TabsTrigger value="committees">Committees</TabsTrigger>
           <TabsTrigger value="admins">Admin accounts</TabsTrigger>
         </TabsList>
 
@@ -217,6 +227,14 @@ export default function Settings() {
                 title="Student attendance rules"
                 description="Thresholds, retake rule and semester dates for student check-ins."
                 fields={STUDENT_FIELD_ORDER}
+                {...fieldProps}
+              />
+            </TabsContent>
+            <TabsContent value="committees">
+              <SettingsCard
+                title="Committee permissions"
+                description="Task management belongs to each committee's chairperson unless this override is switched on."
+                fields={COMMITTEE_FIELD_ORDER}
                 {...fieldProps}
               />
             </TabsContent>

@@ -30,6 +30,11 @@ def create_app(config_class=Config):
     from app.attendance import attendance_bp
     from app.kiosk import kiosk_bp
     from app.student import student_bp
+    from app.committees import committees_bp
+    from app.meetings import meetings_bp
+    from app.notices import notices_bp
+    from app.notifications import notifications_bp
+    from app.reports import reports_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(admin_bp)
@@ -37,6 +42,12 @@ def create_app(config_class=Config):
     app.register_blueprint(attendance_bp)
     app.register_blueprint(kiosk_bp)
     app.register_blueprint(student_bp)
+    # Committees & task management module (shares users, auth and email).
+    app.register_blueprint(committees_bp)
+    app.register_blueprint(meetings_bp)
+    app.register_blueprint(notices_bp)
+    app.register_blueprint(notifications_bp)
+    app.register_blueprint(reports_bp)
 
     @app.get("/api/health")
     def health():
@@ -45,8 +56,12 @@ def create_app(config_class=Config):
     @app.get("/api/uploads/<path:filename>")
     @roles_required()
     def uploaded_file(filename):
-        """Student photos are personal data: only signed-in users may fetch them."""
-        if safe_join(app.config["UPLOAD_FOLDER"], filename) is None:
+        """Student photos are personal data: only signed-in users may fetch them.
+        Committee documents live under private/ and are served only by their
+        own routes, which check the requester may see that record."""
+        joined = safe_join(app.config["UPLOAD_FOLDER"], filename)
+        private_root = os.path.join(os.path.normpath(app.config["UPLOAD_FOLDER"]), "private")
+        if joined is None or os.path.normpath(joined) == private_root or os.path.normpath(joined).startswith(private_root + os.sep):
             return {"error": "Not found"}, 404
         return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
 

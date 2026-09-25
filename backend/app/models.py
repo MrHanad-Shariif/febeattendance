@@ -308,6 +308,7 @@ class Setting(db.Model):
         "student_absence_threshold_percent": ("25", "A student who has missed this percentage or more of a course's TOTAL planned sessions for the semester (not just sessions so far) is blocked from further check-ins to it and the course is flagged for retake."),
         "semester_start_date": ("2026-10-01", "First day of the current semester, used to work out each course's total planned sessions for the 25% attendance rule."),
         "semester_end_date": ("2027-02-28", "Last day of the current semester, used the same way as semester_start_date."),
+        "dean_task_override": ("off", "on = the Dean may assign and manage tasks and meetings in any committee, not only committees they chair. off = only each committee's chairperson can."),
     }
 
     def to_dict(self):
@@ -361,3 +362,427 @@ class PasswordResetToken(db.Model):
 
     def is_valid(self):
         return self.used_at is None and utcnow() < self.expires_at
+
+
+# ---------------------------------------------------------------------------
+# Committees & task management module.
+#
+# Everything below reuses the `users` table: a lecturer (or admin) keeps one
+# account, and their extra responsibilities -- Dean, Administration Team,
+# committee member, committee chairperson -- are rows in these tables rather
+# than new accounts or a different `User.role`. Permission rules live in
+# utils/permissions.py and are checked on the server for every request.
+# ---------------------------------------------------------------------------
+
+class FacultyRole(db.Model):
+    """Faculty-level responsibility held by an existing account."""
+    __tablename__ = "faculty_roles"
+
+    ROLES = ("dean", "admin_team")
+    LABELS = {"dean": "Dean", "admin_team": "Administration Team"}
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    role = db.Column(db.String(20), nullable=False)
+    granted_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    granted_at = db.Column(db.DateTime, default=utcnow)
+
+    user = db.relationship("User", foreign_keys=[user_id])
+
+    __table_args__ = (db.UniqueConstraint("user_id", "role", name="uq_faculty_role_user_role"),)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "user_name": self.user.name if self.user else None,
+            "user_email": self.user.email if self.user else None,
+            "role": self.role,
+            "role_label": self.LABELS.get(self.role, self.role),
+            "granted_at": self.granted_at.isoformat() if self.granted_at else None,
+        }
+
+
+class Committee(db.Model):
+    """A faculty committee. kind='administration' is the Dean's Administration
+    Team, which reuses the same task/meeting/minutes machinery."""
+    __tablename__ = "committees"
+
+    KINDS = ("committee", "administration")
+    KIND_LABELS = {"committee": "Committee", "administration": "Administration Team"}
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(200), nullable=False, unique=True)
+    description = db.Column(db.Text, nullable=True)
+    kind = db.Column(db.String(20), nullable=False, default="committee")
+    chairperson_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    status = db.Column(db.String(20), nullable=False, default="active")  # active | archived
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+
+    chairperson = db.relationship("User", foreign_keys=[chairperson_id])
+    memberships = db.relationship("CommitteeMember", back_populates="committee", cascade="all, delete-orphan")
+
+    def to_dict(self, counts: dict | None = None):
+        data = {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "kind": self.kind,
+            "kind_label": self.KIND_LABELS.get(self.kind, self.kind),
+            "chairperson_id": self.chairperson_id,
+            "chairperson_name": self.chairperson.name if self.chairperson else None,
+            "status": self.status,
+            "member_count": len(self.memberships),
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+        if counts:
+            data.update(counts)
+        return data
+
+
+class CommitteeMember(db.Model):
+    __tablename__ = "committee_members"
+
+    ROLES = ("member", "chairperson")
+
+    id = db.Column(db.Integer, primary_key=True)
+    committee_id = db.Column(db.Integer, db.ForeignKey("committees.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    role = db.Column(db.String(20), nullable=False, default="member")
+    joined_at = db.Column(db.DateTime, default=utcnow)
+
+    committee = db.relationship("Committee", back_populates="memberships")
+    user = db.relationship("User")
+
+    __table_args__ = (db.UniqueConstraint("committee_id", "user_id", name="uq_committee_member"),)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "committee_id": self.committee_id,
+            "user_id": self.user_id,
+            "name": self.user.name if self.user else None,
+            "email": self.user.email if self.user else None,
+            "role": self.role,
+            "joined_at": self.joined_at.isoformat() if self.joined_at else None,
+        }
+
+
+class Task(db.Model):
+    __tablename__ = "tasks"
+
+    STATUSES = ("pending", "in_progress", "completed")
+    PRIORITIES = ("low", "normal", "high", "urgent")
+    STATUS_LABELS = {"pending": "Pending", "in_progress": "In progress", "completed": "Completed", "overdue": "Overdue"}
+
+    id = db.Column(db.Integer, primary_key=True)
+    committee_id = db.Column(db.Integer, db.ForeignKey("committees.id", ondelete="CASCADE"), nullable=False, index=True)
+    assigned_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    assigned_to_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    title = db.Column(db.String(255), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    deadline = db.Column(db.DateTime, nullable=True)
+    priority = db.Column(db.String(20), nullable=False, default="normal")
+    status = db.Column(db.String(20), nullable=False, default="pending")
+    assigned_at = db.Column(db.DateTime, default=utcnow)
+    completed_at = db.Column(db.DateTime, nullable=True)
+    completed_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    completion_note = db.Column(db.Text, nullable=True)
+    # Set by the deadline sweep so each reminder is sent only once.
+    due_soon_notified_at = db.Column(db.DateTime, nullable=True)
+    overdue_notified_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+
+    committee = db.relationship("Committee")
+    assigned_by = db.relationship("User", foreign_keys=[assigned_by_id])
+    assigned_to = db.relationship("User", foreign_keys=[assigned_to_id])
+    completed_by = db.relationship("User", foreign_keys=[completed_by_id])
+    attachments = db.relationship("TaskAttachment", back_populates="task", cascade="all, delete-orphan",
+                                  order_by="TaskAttachment.uploaded_at")
+    events = db.relationship("TaskEvent", back_populates="task", cascade="all, delete-orphan",
+                             order_by="TaskEvent.created_at")
+
+    def is_overdue(self, now=None) -> bool:
+        now = now or utcnow()
+        return self.status != "completed" and self.deadline is not None and self.deadline < now
+
+    def display_status(self, now=None) -> str:
+        return "overdue" if self.is_overdue(now) else self.status
+
+    def to_dict(self, detail: bool = False):
+        shown = self.display_status()
+        data = {
+            "id": self.id,
+            "committee_id": self.committee_id,
+            "committee_name": self.committee.name if self.committee else None,
+            "committee_kind": self.committee.kind if self.committee else None,
+            "assigned_by_id": self.assigned_by_id,
+            "assigned_by_name": self.assigned_by.name if self.assigned_by else None,
+            "assigned_to_id": self.assigned_to_id,
+            "assigned_to_name": self.assigned_to.name if self.assigned_to else None,
+            "title": self.title,
+            "description": self.description,
+            "deadline": self.deadline.isoformat() if self.deadline else None,
+            "priority": self.priority,
+            "status": self.status,
+            "display_status": shown,
+            "status_label": self.STATUS_LABELS.get(shown, shown),
+            "is_overdue": shown == "overdue",
+            "assigned_at": self.assigned_at.isoformat() if self.assigned_at else None,
+            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+            "completed_by_name": self.completed_by.name if self.completed_by else None,
+            "completion_note": self.completion_note,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "attachment_count": len(self.attachments),
+        }
+        if detail:
+            data["attachments"] = [a.to_dict() for a in self.attachments]
+            data["history"] = [e.to_dict() for e in self.events]
+        return data
+
+
+class TaskAttachment(db.Model):
+    __tablename__ = "task_attachments"
+
+    id = db.Column(db.Integer, primary_key=True)
+    task_id = db.Column(db.Integer, db.ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False, index=True)
+    file_name = db.Column(db.String(255), nullable=False)  # original name, for display/download
+    file_path = db.Column(db.String(255), nullable=False)  # relative to UPLOAD_FOLDER (private/...)
+    uploaded_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    uploaded_at = db.Column(db.DateTime, default=utcnow)
+
+    task = db.relationship("Task", back_populates="attachments")
+    uploaded_by = db.relationship("User")
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "task_id": self.task_id,
+            "file_name": self.file_name,
+            "url": f"/api/tasks/{self.task_id}/attachments/{self.id}",
+            "uploaded_by_name": self.uploaded_by.name if self.uploaded_by else None,
+            "uploaded_at": self.uploaded_at.isoformat() if self.uploaded_at else None,
+        }
+
+
+class TaskEvent(db.Model):
+    """Audit trail: one row per important action on a task (never edited)."""
+    __tablename__ = "task_events"
+
+    LABELS = {
+        "created": "Task created",
+        "assigned": "Assigned",
+        "reassigned": "Reassigned",
+        "edited": "Edited",
+        "deadline_changed": "Deadline changed",
+        "status_changed": "Status changed",
+        "completed": "Completed",
+        "reopened": "Reopened",
+        "file_uploaded": "File uploaded",
+        "notification_sent": "Notification sent",
+        "deleted": "Deleted",
+    }
+
+    id = db.Column(db.Integer, primary_key=True)
+    task_id = db.Column(db.Integer, db.ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False, index=True)
+    actor_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    action = db.Column(db.String(30), nullable=False)
+    old_value = db.Column(db.JSON, nullable=True)
+    new_value = db.Column(db.JSON, nullable=True)
+    note = db.Column(db.String(500), nullable=True)
+    created_at = db.Column(db.DateTime, default=utcnow)
+
+    task = db.relationship("Task", back_populates="events")
+    actor = db.relationship("User")
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "action": self.action,
+            "action_label": self.LABELS.get(self.action, self.action),
+            "actor_name": self.actor.name if self.actor else "System",
+            "old_value": self.old_value,
+            "new_value": self.new_value,
+            "note": self.note,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class Meeting(db.Model):
+    __tablename__ = "meetings"
+
+    STATUSES = ("scheduled", "held", "cancelled")
+
+    id = db.Column(db.Integer, primary_key=True)
+    committee_id = db.Column(db.Integer, db.ForeignKey("committees.id", ondelete="CASCADE"), nullable=False, index=True)
+    title = db.Column(db.String(255), nullable=False)
+    date = db.Column(db.Date, nullable=False)
+    start_time = db.Column(db.Time, nullable=True)
+    end_time = db.Column(db.Time, nullable=True)
+    location = db.Column(db.String(255), nullable=True)
+    agenda = db.Column(db.Text, nullable=True)
+    agenda_file_name = db.Column(db.String(255), nullable=True)
+    agenda_file_path = db.Column(db.String(255), nullable=True)
+    status = db.Column(db.String(20), nullable=False, default="scheduled")
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+
+    committee = db.relationship("Committee")
+    created_by = db.relationship("User")
+    minutes = db.relationship("MeetingMinutes", back_populates="meeting", uselist=False)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "committee_id": self.committee_id,
+            "committee_name": self.committee.name if self.committee else None,
+            "committee_kind": self.committee.kind if self.committee else None,
+            "meeting_type": Committee.KIND_LABELS.get(self.committee.kind) if self.committee else None,
+            "title": self.title,
+            "date": self.date.isoformat() if self.date else None,
+            "start_time": self.start_time.strftime("%H:%M") if self.start_time else None,
+            "end_time": self.end_time.strftime("%H:%M") if self.end_time else None,
+            "location": self.location,
+            "agenda": self.agenda,
+            "agenda_file_name": self.agenda_file_name,
+            "agenda_url": f"/api/meetings/{self.id}/agenda" if self.agenda_file_path else None,
+            "status": self.status,
+            "created_by_name": self.created_by.name if self.created_by else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "minutes_id": self.minutes.id if self.minutes else None,
+        }
+
+
+class MeetingMinutes(db.Model):
+    """Permanent archive of officially published minutes."""
+    __tablename__ = "meeting_minutes"
+
+    VISIBILITIES = ("committee", "faculty")
+
+    id = db.Column(db.Integer, primary_key=True)
+    meeting_id = db.Column(db.Integer, db.ForeignKey("meetings.id", ondelete="SET NULL"), nullable=True, unique=True)
+    committee_id = db.Column(db.Integer, db.ForeignKey("committees.id", ondelete="CASCADE"), nullable=False, index=True)
+    title = db.Column(db.String(255), nullable=False)
+    meeting_date = db.Column(db.Date, nullable=False)
+    summary = db.Column(db.Text, nullable=True)
+    file_name = db.Column(db.String(255), nullable=False)
+    file_path = db.Column(db.String(255), nullable=False)
+    visibility = db.Column(db.String(20), nullable=False, default="committee")
+    uploaded_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    published_at = db.Column(db.DateTime, default=utcnow)  # the official release date/time
+
+    meeting = db.relationship("Meeting", back_populates="minutes")
+    committee = db.relationship("Committee")
+    uploaded_by = db.relationship("User")
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "meeting_id": self.meeting_id,
+            "committee_id": self.committee_id,
+            "committee_name": self.committee.name if self.committee else None,
+            "committee_kind": self.committee.kind if self.committee else None,
+            "unit_label": Committee.KIND_LABELS.get(self.committee.kind) if self.committee else None,
+            "title": self.title,
+            "meeting_date": self.meeting_date.isoformat() if self.meeting_date else None,
+            "year": self.meeting_date.year if self.meeting_date else None,
+            "summary": self.summary,
+            "file_name": self.file_name,
+            "url": f"/api/minutes/{self.id}/document",
+            "visibility": self.visibility,
+            "uploaded_by_name": self.uploaded_by.name if self.uploaded_by else None,
+            "published_at": self.published_at.isoformat() if self.published_at else None,
+        }
+
+
+class Notification(db.Model):
+    __tablename__ = "notifications"
+
+    TYPES = ("task", "meeting", "minutes", "notice")
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    type = db.Column(db.String(20), nullable=False)
+    title = db.Column(db.String(255), nullable=False)
+    message = db.Column(db.String(1000), nullable=True)
+    link = db.Column(db.String(255), nullable=True)  # SPA path to open
+    related_record_id = db.Column(db.Integer, nullable=True)
+    read_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=utcnow, index=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "type": self.type,
+            "title": self.title,
+            "message": self.message,
+            "link": self.link,
+            "related_record_id": self.related_record_id,
+            "read": self.read_at is not None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class InformationPost(db.Model):
+    """Information Sharing: the notification/distribution channel. Published
+    minutes create one of these automatically (category 'meeting_minutes')."""
+    __tablename__ = "information_posts"
+
+    CATEGORIES = ("announcement", "circular", "policy", "event", "meeting_minutes", "other")
+    AUDIENCES = ("all_staff", "lecturers", "committee")
+
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(255), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    category = db.Column(db.String(30), nullable=False, default="announcement")
+    audience = db.Column(db.String(20), nullable=False, default="all_staff")
+    committee_id = db.Column(db.Integer, db.ForeignKey("committees.id", ondelete="CASCADE"), nullable=True)
+    file_name = db.Column(db.String(255), nullable=True)
+    file_path = db.Column(db.String(255), nullable=True)
+    minutes_id = db.Column(db.Integer, db.ForeignKey("meeting_minutes.id", ondelete="CASCADE"), nullable=True)
+    published_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    published_at = db.Column(db.DateTime, default=utcnow, index=True)
+
+    committee = db.relationship("Committee")
+    published_by = db.relationship("User")
+    minutes = db.relationship("MeetingMinutes")
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "title": self.title,
+            "description": self.description,
+            "category": self.category,
+            "audience": self.audience,
+            "committee_id": self.committee_id,
+            "committee_name": self.committee.name if self.committee else None,
+            "file_name": self.file_name,
+            "url": f"/api/notices/{self.id}/document" if self.file_path else None,
+            "minutes_id": self.minutes_id,
+            "published_by_name": self.published_by.name if self.published_by else None,
+            "published_at": self.published_at.isoformat() if self.published_at else None,
+        }
+
+
+class EmailOutbox(db.Model):
+    """Queued emails, sent in batches by the flush_email_outbox job so a
+    faculty-wide notice never blocks a request or fails on one bad address."""
+    __tablename__ = "email_outbox"
+
+    MAX_ATTEMPTS = 3
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    subject = db.Column(db.String(255), nullable=False)
+    html = db.Column(db.Text, nullable=False)
+    status = db.Column(db.String(20), nullable=False, default="pending", index=True)  # pending | sent | failed
+    attempts = db.Column(db.Integer, nullable=False, default=0)
+    last_error = db.Column(db.String(500), nullable=True)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    sent_at = db.Column(db.DateTime, nullable=True)
+
+    user = db.relationship("User")

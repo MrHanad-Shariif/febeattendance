@@ -137,6 +137,51 @@ def mark_student_absentees(app):
         db.session.commit()
 
 
+def flush_email_outbox(app):
+    from app.utils.notify import flush_outbox
+
+    with app.app_context():
+        flush_outbox()
+
+
+def task_deadline_sweep(app):
+    """Remind assignees 24h before a deadline, and tell the assignee and the
+    chairperson once when a task becomes overdue. Overdue itself is derived
+    from the deadline (Task.is_overdue), so nothing else needs updating."""
+    from datetime import timedelta
+
+    from app.models import Task
+    from app.utils.notify import notify, subject_for
+    from app.utils.task_audit import record_event
+
+    with app.app_context():
+        now = datetime.now()
+        open_tasks = Task.query.filter(Task.status != "completed", Task.deadline.isnot(None))
+
+        for task in open_tasks.filter(
+            Task.deadline >= now, Task.deadline <= now + timedelta(hours=24), Task.due_soon_notified_at.is_(None)
+        ).all():
+            notify(
+                [task.assigned_to], type="task", title=f"Task due soon: {task.title}",
+                message=f"{task.committee.name}. Deadline: {task.deadline:%d %b %Y %H:%M}.",
+                link=f"/tasks/{task.id}", related_id=task.id,
+                email_subject=subject_for("task_due_soon", task.title),
+            )
+            task.due_soon_notified_at = now
+            record_event(task, None, "notification_sent", new={"reminder": "due_soon"})
+
+        for task in open_tasks.filter(Task.deadline < now, Task.overdue_notified_at.is_(None)).all():
+            notify(
+                [task.assigned_to, task.committee.chairperson], type="task", title=f"Task overdue: {task.title}",
+                message=f"{task.committee.name}. The deadline was {task.deadline:%d %b %Y %H:%M}.",
+                link=f"/tasks/{task.id}", related_id=task.id,
+                email_subject=subject_for("task_overdue", task.title),
+            )
+            task.overdue_notified_at = now
+            record_event(task, None, "status_changed", old=task.status, new="overdue", note="Deadline passed")
+        db.session.commit()
+
+
 def register_jobs(app, scheduler):
     scheduler.add_job(
         id="mark_absentees", func=mark_absentees, args=[app],
@@ -153,4 +198,12 @@ def register_jobs(app, scheduler):
     scheduler.add_job(
         id="mark_student_absentees", func=mark_student_absentees, args=[app],
         trigger="interval", minutes=2, replace_existing=True,
+    )
+    scheduler.add_job(
+        id="flush_email_outbox", func=flush_email_outbox, args=[app],
+        trigger="interval", minutes=1, replace_existing=True,
+    )
+    scheduler.add_job(
+        id="task_deadline_sweep", func=task_deadline_sweep, args=[app],
+        trigger="interval", minutes=15, replace_existing=True,
     )
