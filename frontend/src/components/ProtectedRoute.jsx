@@ -1,10 +1,11 @@
 import { Navigate, useLocation } from "react-router-dom";
 import { Loader2 } from "lucide-react";
-import { useAuth } from "../context/AuthContext.jsx";
+import { hasPermission, useAuth } from "../context/AuthContext.jsx";
 
 // requireFace: students who haven't registered a face yet are sent to
 // /enroll-face first (and brought back afterwards).
-export default function ProtectedRoute({ children, roles, requireFace = true }) {
+// perms: the page needs at least one of these RBAC permissions.
+export default function ProtectedRoute({ children, roles, perms, requireFace = true }) {
   const { user, loading } = useAuth();
   const location = useLocation();
 
@@ -28,6 +29,10 @@ export default function ProtectedRoute({ children, roles, requireFace = true }) 
   }
 
   if (roles && !roles.includes(user.role)) {
+    return <Navigate to="/" replace />;
+  }
+
+  if (perms && !hasPermission(user, ...perms)) {
     return <Navigate to="/" replace />;
   }
 

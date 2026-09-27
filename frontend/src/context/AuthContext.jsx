@@ -3,6 +3,17 @@ import client from "../api/client";
 
 const AuthContext = createContext(null);
 
+/** Fine-grained RBAC permissions ("<resource>:<action>") the account holds.
+ * Only decides what the UI shows; the API checks every request itself. */
+export function permissionsOf(user) {
+  return user?.capabilities?.permissions || [];
+}
+
+export function hasPermission(user, ...codes) {
+  const perms = permissionsOf(user);
+  return codes.some((c) => perms.includes(c));
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => {
     const raw = localStorage.getItem("user");
@@ -47,8 +58,10 @@ export function AuthProvider({ children }) {
     setUser(null);
   }
 
+  const can = (...codes) => hasPermission(user, ...codes);
+
   return (
-    <AuthContext.Provider value={{ user, login, logout, updateUser, loading }}>
+    <AuthContext.Provider value={{ user, login, logout, updateUser, loading, can }}>
       {children}
     </AuthContext.Provider>
   );

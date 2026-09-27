@@ -12,6 +12,7 @@ the chairperson manages a committee's tasks, unless an admin switches on the
 explicit `dean_task_override` setting.
 """
 from app.models import Committee, CommitteeMember, FacultyRole, InformationPost, MeetingMinutes, Task, User
+from app.utils.rbac import has_permission, user_permissions
 from app.utils.settings import get_setting_str
 from app.utils.validation import ValidationError
 
@@ -28,7 +29,9 @@ def has_faculty_role(user: User, role: str) -> bool:
 
 
 def is_admin(user: User) -> bool:
-    return user.role == "admin"
+    """Committee administrator: holds committees:edit through an RBAC role
+    (see utils/rbac.py). A Super Admin always does."""
+    return has_permission(user, "committees:edit")
 
 
 def is_dean(user: User) -> bool:
@@ -68,8 +71,8 @@ def dean_override_enabled() -> bool:
 # ---------- Committee-level rules ----------
 
 def can_view_all_committees(user: User) -> bool:
-    """Faculty-level monitoring: the Dean and system admins."""
-    return is_admin(user) or is_dean(user)
+    """Faculty-level monitoring: the Dean and staff with committees:view."""
+    return has_permission(user, "committees:view") or is_dean(user)
 
 
 def can_view_committee(user: User, committee: Committee) -> bool:
@@ -151,7 +154,7 @@ def can_view_notice(user: User, post: InformationPost) -> bool:
 
 def capabilities(user: User) -> dict:
     if user.role == "student":
-        return {}
+        return {"permissions": []}
     memberships = CommitteeMember.query.filter_by(user_id=user.id).all()
     return {
         "is_dean": is_dean(user),
@@ -160,4 +163,7 @@ def capabilities(user: User) -> dict:
         "can_view_all_committees": can_view_all_committees(user),
         "chaired_committee_ids": sorted(m.committee_id for m in memberships if m.role == "chairperson"),
         "member_committee_ids": sorted(m.committee_id for m in memberships),
+        # Fine-grained RBAC permissions ("<resource>:<action>") for building
+        # the menu and hiding buttons. Display only: the API checks each one.
+        "permissions": sorted(user_permissions(user)),
     }

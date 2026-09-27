@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
@@ -9,6 +9,7 @@ import {
   KeyRound,
   Loader2,
   MapPin,
+  PenLine,
   QrCode,
   RotateCcw,
   ScanFace,
@@ -37,7 +38,13 @@ const REFUSAL_TITLES = {
   already_checked_in: "You're already checked in",
   blocked: "Check-in blocked",
   face_locked: "Check-in locked for this class",
+  board_locked: "Board check-in locked for this class",
+  board_closed: "Board check-in closed",
+  no_class: "No class is running right now",
 };
+
+// Refusals where starting again can't help.
+const FINAL_REASONS = ["already_checked_in", "wrong_batch", "blocked", "face_locked", "face_mismatch", "board_locked"];
 
 function Notice({ tone = "danger", icon: Icon, title, children, action }) {
   const tones = {
@@ -89,14 +96,16 @@ function Stepper({ steps, current }) {
 }
 
 /**
- * Student check-in, opened by scanning the QR code on the lecturer's screen
- * (/student-checkin?s=<session token>). Steps: class code -> location
- * (+ Confirm) -> live face scan -> marked present. Which steps apply comes
- * from the server's settings.
+ * Student check-in, opened either by scanning the QR code on the lecturer's
+ * screen (/student-checkin?s=<session token>) or from "Check in to current
+ * class" when the lecturer wrote a board code (/student-checkin?board=1).
+ * Steps: class code (rotating or board) -> location (+ Confirm) -> live face
+ * scan -> marked present. Which steps apply comes from the server's settings.
  */
 export default function StudentCheckIn() {
   const [params] = useSearchParams();
   const sessionToken = params.get("s");
+  const boardMode = !sessionToken && params.get("board") === "1";
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -147,10 +156,70 @@ export default function StudentCheckIn() {
     }
   }
 
+  // Board mode: the server works out which class is running now for the
+  // student's batch; the board code then stands in for the QR + class code.
+  const boardLoad = useRef(0);
+  async function startBoard() {
+    const run = ++boardLoad.current;
+    setPhase("loading");
+    setError("");
+    setCode("");
+    try {
+      const res = await client.get("/student/current-class");
+      if (run !== boardLoad.current) return; // a newer load superseded this one
+      const data = res.data;
+      if (!data.session) {
+        setRefusal({
+          reason: "no_class",
+          title: REFUSAL_TITLES.no_class,
+          message: "Board check-in works during your class, from 30 minutes before it starts until it ends.",
+        });
+        setPhase("refused");
+        return;
+      }
+      setSession(data.session);
+      if (data.checked_in) {
+        setRefusal({ reason: "already_checked_in", title: REFUSAL_TITLES.already_checked_in, message: "You've already checked in for this class." });
+        setPhase("refused");
+        return;
+      }
+      setSteps((st) => ({ ...st, code: true }));
+      setPhase("board");
+      if (!data.board_open) setError("Your lecturer hasn't started board check-in yet. Type the code once it's on the board.");
+    } catch (err) {
+      refuse(err);
+    }
+  }
+
+  const restart = boardMode ? startBoard : start;
+
   useEffect(() => {
     if (sessionToken) start();
+    else if (boardMode) startBoard();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionToken]);
+  }, [sessionToken, boardMode]);
+
+  async function submitBoard(e) {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      const res = await client.post("/student/checkin/board", { timetable_id: session.timetable_id, code: code.trim() });
+      accept(res.data);
+      setSession(res.data.session);
+      setSteps(res.data.steps);
+      setPhase(res.data.steps.location ? "location" : "confirm");
+    } catch (err) {
+      const reason = err.response?.data?.reason;
+      setCode("");
+      if (reason === "board_wrong_code" || reason === "board_not_open") {
+        setError(apiErrorMessage(err));
+      } else {
+        stepFailed(err, "Incorrect code. Please try again.");
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
 
   // A step failed because the ticket expired or the class state changed:
   // the whole flow must restart, so surface it as a refusal with "Start again".
@@ -252,7 +321,7 @@ export default function StudentCheckIn() {
     }
   }
 
-  if (!sessionToken) {
+  if (!sessionToken && !boardMode) {
     return (
       <div className="mx-auto max-w-md py-10">
         <Notice
@@ -260,19 +329,31 @@ export default function StudentCheckIn() {
           icon={QrCode}
           title="Scan your lecturer's QR code"
           action={
-            <Button asChild variant="outline">
-              <Link to="/">Go to my dashboard</Link>
-            </Button>
+            <div className="flex flex-col gap-2">
+              <Button asChild>
+                <Link to="/student-checkin?board=1">
+                  <PenLine /> Use the code on the board
+                </Link>
+              </Button>
+              <Button asChild variant="outline">
+                <Link to="/">Go to my dashboard</Link>
+              </Button>
+            </div>
           }
         >
-          To check in, scan the QR code shown on your lecturer's screen during class. Each class has its own code.
+          To check in, scan the QR code shown on your lecturer's screen during class. Each class has its own code. If your
+          lecturer wrote a code on the board instead, use that.
         </Notice>
       </div>
     );
   }
 
-  const stepList = STEPS.map((s) => ({ ...s, enabled: steps[s.key] }));
-  const stepperCurrent = phase === "confirm" ? "location" : phase;
+  const stepList = STEPS.map((s) => ({
+    ...s,
+    enabled: steps[s.key],
+    ...(boardMode && s.key === "code" ? { label: "Board code", icon: PenLine } : {}),
+  }));
+  const stepperCurrent = phase === "confirm" ? "location" : phase === "board" ? "code" : phase;
 
   return (
     <div className="mx-auto max-w-md space-y-4 py-4">
@@ -297,9 +378,9 @@ export default function StudentCheckIn() {
           title={refusal.title}
           action={
             <div className="flex flex-col gap-2">
-              {!["already_checked_in", "wrong_batch", "blocked", "face_locked", "face_mismatch"].includes(refusal.reason) && (
-                <Button onClick={start}>
-                  <RotateCcw /> Start again
+              {!FINAL_REASONS.includes(refusal.reason) && (
+                <Button onClick={restart}>
+                  <RotateCcw /> {refusal.reason === "no_class" ? "Check again" : "Start again"}
                 </Button>
               )}
               <Button asChild variant="outline">
@@ -338,6 +419,35 @@ export default function StudentCheckIn() {
           {phase !== "done" && <Stepper steps={stepList} current={stepperCurrent} />}
 
           <motion.div key={phase} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+            {phase === "board" && (
+              <Card>
+                <CardContent className="p-6">
+                  <form onSubmit={submitBoard} className="space-y-4">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="board-code">Board code</Label>
+                      <p className="text-sm text-muted-foreground">
+                        Enter the {session.board_code_digits}-digit code your lecturer wrote on the board.
+                      </p>
+                      <Input
+                        id="board-code"
+                        autoFocus
+                        inputMode="numeric"
+                        autoComplete="off"
+                        maxLength={session.board_code_digits}
+                        value={code}
+                        onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+                        className="h-14 text-center text-2xl font-semibold tracking-[0.5em]"
+                      />
+                    </div>
+                    {error && <Alert>{error}</Alert>}
+                    <Button type="submit" size="lg" className="w-full" disabled={busy || code.length !== session.board_code_digits}>
+                      {busy ? <Loader2 className="animate-spin" /> : <PenLine />} Continue
+                    </Button>
+                  </form>
+                </CardContent>
+              </Card>
+            )}
+
             {phase === "code" && (
               <Card>
                 <CardContent className="p-6">

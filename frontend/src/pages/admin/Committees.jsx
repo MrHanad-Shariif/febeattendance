@@ -12,9 +12,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { KIND_OPTIONS } from "@/lib/committees";
+import { useAuth } from "@/context/AuthContext.jsx";
 
 /** Admin: create committees, set chairpersons and members. */
 export default function Committees() {
+  const { can } = useAuth();
+  const canEdit = can("committees:edit");
+  const canDelete = can("committees:delete");
   const navigate = useNavigate();
   const { data, loading, error, reload } = useApi("/committees?scope=all", []);
   const [editing, setEditing] = useState(undefined); // undefined = closed, null = new
@@ -66,28 +70,34 @@ export default function Committees() {
         enableHiding: false,
         enableSorting: false,
         meta: { noExport: true, className: "w-12 text-right" },
-        cell: ({ row }) => (
-          <div onClick={(e) => e.stopPropagation()}>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Row actions">
-                  <MoreHorizontal />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onSelect={() => setEditing(row.original)}>
-                  <Pencil /> Edit
-                </DropdownMenuItem>
-                <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => setToDelete(row.original)}>
-                  <Trash2 /> Delete
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        ),
+        cell: ({ row }) =>
+          (canEdit || canDelete) && (
+            <div onClick={(e) => e.stopPropagation()}>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Row actions">
+                    <MoreHorizontal />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {canEdit && (
+                    <DropdownMenuItem onSelect={() => setEditing(row.original)}>
+                      <Pencil /> Edit
+                    </DropdownMenuItem>
+                  )}
+                  {canDelete && (
+                    <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => setToDelete(row.original)}>
+                      <Trash2 /> Delete
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          ),
       },
     ],
-    []
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [canEdit, canDelete]
   );
 
   return (
@@ -96,9 +106,11 @@ export default function Committees() {
         title="Manage committees"
         description="Create committees and the Administration Team, and choose each chairperson and member from existing staff accounts."
         actions={
-          <Button onClick={() => setEditing(null)}>
-            <Plus /> New committee
-          </Button>
+          can("committees:add") && (
+            <Button onClick={() => setEditing(null)}>
+              <Plus /> New committee
+            </Button>
+          )
         }
       />
       {error && <Alert>{error}</Alert>}

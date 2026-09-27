@@ -17,41 +17,23 @@ import {
   GraduationCap,
   History,
   KeyRound,
+  KeySquare,
   LayoutDashboard,
+  LayoutGrid,
+  Lock,
   ScanLine,
   Settings,
   UserCheck,
+  UserCog,
   Users,
 } from "lucide-react";
 
 /**
- * Sidebar menus per role. An item with `children` is a collapsible group;
- * groups can nest to any depth. Leaf items have `to`.
+ * Sidebar menus. An item with `children` is a collapsible group; groups can
+ * nest to any depth. Leaf items have `to`. Management items carry `perms`
+ * (any-of RBAC permissions) and are dropped for accounts without them.
  */
 export const NAV_BY_ROLE = {
-  admin: [
-    { label: "Dashboard", icon: LayoutDashboard, to: "/admin", end: true },
-    {
-      label: "Lecturers",
-      icon: Users,
-      children: [
-        { label: "Today's attendance", icon: ClipboardCheck, to: "/admin/overview" },
-        { label: "Manage lecturers", icon: UserCheck, to: "/admin/lecturers" },
-        { label: "Timetable", icon: CalendarClock, to: "/admin/timetable" },
-        { label: "Reports", icon: FileBarChart, to: "/admin/reports" },
-      ],
-    },
-    {
-      label: "Students",
-      icon: GraduationCap,
-      children: [
-        { label: "Overview", icon: ClipboardCheck, to: "/admin/student-overview" },
-        { label: "Manage students", icon: Users, to: "/admin/students" },
-        { label: "Reports", icon: FileBarChart, to: "/admin/student-reports" },
-      ],
-    },
-    { label: "Settings", icon: Settings, to: "/admin/settings" },
-  ],
   lecturer: [
     {
       label: "Attendance",
@@ -66,7 +48,7 @@ export const NAV_BY_ROLE = {
       icon: BookOpen,
       children: [
         { label: "My students", icon: GraduationCap, to: "/my-students" },
-        { label: "Show class code", icon: KeyRound, to: "/class-code" },
+        { label: "Class check-in (QR & board)", icon: KeyRound, to: "/class-code" },
       ],
     },
   ],
@@ -77,21 +59,83 @@ export const NAV_BY_ROLE = {
   ],
 };
 
+// Management screens, shown to any staff account (admin or lecturer) that
+// holds the permissions.
+const MANAGEMENT = [
+  { label: "Dashboard", icon: LayoutDashboard, to: "/admin", end: true, perms: ["dashboard:view"] },
+  {
+    label: "Lecturers",
+    icon: Users,
+    children: [
+      { label: "Today's attendance", icon: ClipboardCheck, to: "/admin/overview", perms: ["lecturer_attendance:view"] },
+      { label: "Manage lecturers", icon: UserCheck, to: "/admin/lecturers", perms: ["lecturers:view"] },
+      { label: "Timetable", icon: CalendarClock, to: "/admin/timetable", perms: ["timetable:view"] },
+    ],
+  },
+  {
+    label: "Students",
+    icon: GraduationCap,
+    children: [
+      { label: "Overview", icon: ClipboardCheck, to: "/admin/student-overview", perms: ["student_attendance:view"] },
+      { label: "Manage students", icon: Users, to: "/admin/students", perms: ["students:view"] },
+      { label: "Class check-in (any class)", icon: KeyRound, to: "/class-code", perms: ["class_checkin:view"] },
+    ],
+  },
+];
+
+/** Every report in the app, for the Reports menu and the "All reports" page. */
+export function reportLinks(user) {
+  const caps = user?.capabilities || {};
+  const can = (...codes) => codes.some((c) => (caps.permissions || []).includes(c));
+  const committeeReports = (caps.chaired_committee_ids || []).length > 0 || caps.can_view_all_committees;
+  return [
+    can("reports:view") && {
+      label: "Lecturer attendance", icon: Users, to: "/admin/reports",
+      description: "Monthly on-time, late, absent and left-early counts per lecturer, with CSV export.",
+    },
+    can("reports:view") && {
+      label: "Student attendance", icon: GraduationCap, to: "/admin/student-reports",
+      description: "Class, course and department reports with absence percentages and retake flags.",
+    },
+    can("reports:view") && {
+      label: "Check-in methods", icon: ScanLine, to: "/admin/checkin-methods",
+      description: "QR versus board-code check-ins per class session, to spot suspicious board-code attendance.",
+    },
+    committeeReports && {
+      label: "Committee reports", icon: Network, to: "/committee-reports",
+      description: "Task completion, overdue work and meetings per committee.",
+    },
+  ].filter(Boolean);
+}
+
+function filterByPerms(items, perms) {
+  return items
+    .map((item) => {
+      if (item.children) {
+        const children = filterByPerms(item.children, perms);
+        return children.length ? { ...item, children } : null;
+      }
+      return !item.perms || item.perms.some((p) => perms.includes(p)) ? item : null;
+    })
+    .filter(Boolean);
+}
+
 /**
- * The menu for one account. The attendance menu comes from NAV_BY_ROLE; the
- * committees module adds groups according to every role the person holds
- * (committee member, chairperson, Administration Team, Dean), so one account
- * sees all its functions at once. This only decides what is shown -- the API
- * checks permission on every request.
+ * The menu for one account: its own attendance menu, the management screens
+ * its RBAC roles allow, the committees groups for every committee role it
+ * holds, then Reports, Authentication and Settings. This only decides what is
+ * shown -- the API checks permission on every request.
  */
 export function buildNav(user) {
-  const base = NAV_BY_ROLE[user?.role] || NAV_BY_ROLE.lecturer;
-  if (!user || user.role === "student") return base;
+  if (user?.role === "student") return NAV_BY_ROLE.student;
+  const own = user?.role === "lecturer" ? NAV_BY_ROLE.lecturer : [];
+  if (!user) return own;
 
   const caps = user.capabilities || {};
-  const isAdmin = user.role === "admin";
+  const perms = caps.permissions || [];
+  const can = (...codes) => codes.some((c) => perms.includes(c));
   const chairs = (caps.chaired_committee_ids || []).length > 0;
-  const oversees = isAdmin || caps.is_dean;
+  const oversees = caps.can_view_all_committees;
 
   const committees = [
     { label: "My committees", icon: UsersRound, to: "/committees", end: true },
@@ -101,15 +145,6 @@ export function buildNav(user) {
   if (chairs) {
     committees.push({ label: "Task monitoring", icon: ListChecks, to: "/tasks/monitor" });
   }
-  if (chairs || oversees) {
-    committees.push({ label: "Reports", icon: FileBarChart, to: "/committee-reports" });
-  }
-
-  const information = [
-    { label: "Information sharing", icon: Megaphone, to: "/information" },
-    { label: "Meeting minutes", icon: FileText, to: "/meeting-minutes" },
-    { label: "Notifications", icon: Bell, to: "/notifications" },
-  ];
 
   const groups = [{ label: "Committees", icon: Network, children: committees }];
   if (caps.is_admin_team || caps.is_dean) {
@@ -122,30 +157,76 @@ export function buildNav(user) {
       ],
     });
   }
-  if (oversees) {
+  const facultyAdmin = [
+    can("committees:add", "committees:edit", "committees:delete") && { label: "Manage committees", icon: Settings, to: "/admin/committees" },
+    can("faculty_roles:view") && { label: "Faculty roles", icon: ShieldCheck, to: "/admin/faculty-roles" },
+  ].filter(Boolean);
+  if (oversees || facultyAdmin.length) {
     groups.push({
       label: "Faculty",
       icon: Gauge,
       children: [
-        { label: "Faculty overview", icon: Gauge, to: "/faculty" },
-        { label: "Committee monitoring", icon: Network, to: "/committees/all" },
-        ...(isAdmin
+        ...(oversees
           ? [
-              { label: "Manage committees", icon: Settings, to: "/admin/committees" },
-              { label: "Faculty roles", icon: ShieldCheck, to: "/admin/faculty-roles" },
+              { label: "Faculty overview", icon: Gauge, to: "/faculty" },
+              { label: "Committee monitoring", icon: Network, to: "/committees/all" },
             ]
           : []),
+        ...facultyAdmin,
       ],
     });
   }
-  groups.push({ label: "Information", icon: Megaphone, children: information });
+  groups.push({
+    label: "Information",
+    icon: Megaphone,
+    children: [
+      { label: "Information sharing", icon: Megaphone, to: "/information" },
+      { label: "Meeting minutes", icon: FileText, to: "/meeting-minutes" },
+      { label: "Notifications", icon: Bell, to: "/notifications" },
+    ],
+  });
 
-  // Keep admin Settings last.
-  const settingsIndex = base.findIndex((i) => i.to === "/admin/settings");
-  if (settingsIndex >= 0) {
-    return [...base.slice(0, settingsIndex), ...groups, ...base.slice(settingsIndex)];
+  const reports = reportLinks(user);
+  if (reports.length) {
+    groups.push({
+      label: "Reports",
+      icon: FileBarChart,
+      children: [
+        { label: "All reports", icon: LayoutGrid, to: "/reports", end: true },
+        ...reports.map(({ label, icon, to }) => ({ label, icon, to })),
+      ],
+    });
   }
-  return [...base, ...groups];
+
+  const tail = filterByPerms(
+    [
+      {
+        label: "Authentication",
+        icon: Lock,
+        children: [
+          { label: "Users", icon: UserCog, to: "/access/users", perms: ["users:view"] },
+          { label: "Roles", icon: ShieldCheck, to: "/access/roles", perms: ["roles:view"] },
+          { label: "Permissions", icon: KeySquare, to: "/access/permissions", perms: ["roles:view", "users:view"] },
+        ],
+      },
+      { label: "Settings", icon: Settings, to: "/admin/settings", perms: ["settings:view"] },
+    ],
+    perms
+  );
+
+  return [...own, ...filterByPerms(MANAGEMENT, perms), ...groups, ...tail];
+}
+
+/** Where a staff account lands after signing in: the admin dashboard if it
+ * may see it, otherwise its first menu entry. */
+export function homePath(user) {
+  if (hasDashboard(user)) return "/admin";
+  const first = flattenNav(buildNav(user))[0];
+  return first?.to || "/notifications";
+}
+
+function hasDashboard(user) {
+  return (user?.capabilities?.permissions || []).includes("dashboard:view");
 }
 
 /** Flatten a menu into [{ label, to, trail: [group labels...] }] for breadcrumbs. */

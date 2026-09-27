@@ -35,6 +35,7 @@ def create_app(config_class=Config):
     from app.notices import notices_bp
     from app.notifications import notifications_bp
     from app.reports import reports_bp
+    from app.access import access_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(admin_bp)
@@ -48,6 +49,8 @@ def create_app(config_class=Config):
     app.register_blueprint(notices_bp)
     app.register_blueprint(notifications_bp)
     app.register_blueprint(reports_bp)
+    # User management: users, roles and permissions (fine-grained RBAC).
+    app.register_blueprint(access_bp)
 
     @app.get("/api/health")
     def health():
@@ -80,20 +83,41 @@ def create_app(config_class=Config):
     return app
 
 
+# Columns added to tables that already exist in deployed databases.
+# db.create_all() only creates missing tables, so these are added here.
+NEW_COLUMNS = [
+    ("student_attendance", "checkin_method", "VARCHAR(20)"),
+]
+
+
+def _add_missing_columns():
+    inspector = db.inspect(db.engine)
+    tables = set(inspector.get_table_names())
+    for table, column, ddl in NEW_COLUMNS:
+        if table in tables and column not in {c["name"] for c in inspector.get_columns(table)}:
+            db.session.execute(db.text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
+    db.session.commit()
+
+
 def register_cli(app):
     @app.cli.command("init-db")
     def init_db():
         """Create all tables and seed default settings. Run once on a fresh database."""
+        from app.utils.rbac import ensure_rbac_seeded
         from app.utils.settings import ensure_defaults_seeded
 
         db.create_all()
+        _add_missing_columns()
         ensure_defaults_seeded()
-        print("Database tables created and default settings seeded.")
+        ensure_rbac_seeded()
+        print("Database tables created, default settings and roles seeded.")
 
     @app.cli.command("seed-admin")
     def seed_admin():
         """Create the default super-admin account from .env, if it doesn't exist yet."""
         from app.models import User
+
+        from app.utils.rbac import grant_super_admin
 
         email = app.config["DEFAULT_ADMIN_EMAIL"].strip().lower()
         if User.query.filter_by(email=email).first():
@@ -109,7 +133,8 @@ def register_cli(app):
         user.set_password(app.config["DEFAULT_ADMIN_PASSWORD"])
         db.session.add(user)
         db.session.commit()
-        print(f"Created admin {email}. Log in and change the password immediately.")
+        grant_super_admin(user)
+        print(f"Created admin {email} (Super Admin). Log in and change the password immediately.")
 
     @app.cli.command("seed-settings")
     def seed_settings():

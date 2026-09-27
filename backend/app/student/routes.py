@@ -6,14 +6,14 @@ from sqlalchemy.exc import IntegrityError
 
 from app.student import student_bp
 from app.extensions import db, limiter
-from app.models import FaceCheckAttempt, Timetable, StudentAttendance
-from app.utils import face
+from app.models import BoardCodeAttempt, BoardSession, FaceCheckAttempt, Timetable, StudentAttendance
+from app.utils import board_code, face
 from app.utils.authz import roles_required, current_user
 from app.utils.checkin_session import load_session_token, load_ticket, make_ticket
 from app.utils.face_enrollment import enroll_student_face
 from app.utils.geo import haversine_distance_m
 from app.utils.student_code import verify_code
-from app.utils.schedule import scheduled_datetimes, teaches_on
+from app.utils.schedule import get_batch_classes, scheduled_datetimes, teaches_on
 from app.utils.settings import get_all_settings, get_setting_float, get_setting_int, get_no_class_dates
 from app.utils.student_status import compute_student_checkin_status, is_course_blocked
 from app.utils.student_today import get_student_today_rows
@@ -44,6 +44,15 @@ TOO_MANY_ATTEMPTS_MESSAGE = (
     "Please see your lecturer, who can record your attendance."
 )
 FACE_NOT_ENROLLED_MESSAGE = "Please register your face before checking in."
+BOARD_NOT_OPEN_MESSAGE = (
+    "Board check-in isn't open for this class right now. If your lecturer is showing a QR code, "
+    "scan it instead; otherwise ask your lecturer to start board check-in."
+)
+BOARD_CLOSED_MESSAGE = "Your lecturer has closed board check-in for this class."
+BOARD_LOCKED_MESSAGE = (
+    "Too many wrong board codes for this class, so board check-in is locked for you in this session. "
+    "Please see your lecturer, who can record your attendance."
+)
 
 # Face attempts that count toward the per-session limit (a blurry or empty
 # frame doesn't -- the student just retries).
@@ -161,6 +170,11 @@ def _ticket_session(user, settings):
     data = request.get_json(silent=True) if request.is_json else request.form
     ticket = load_ticket((data or {}).get("ticket"), user.id)
     entry, start_dt, end_dt = _open_session(user, ticket["t"], date.fromisoformat(ticket["d"]), settings)
+    if ticket.get("m") == "board":
+        # "Close check-in" stops board check-ins immediately, including ones mid-way.
+        board = BoardSession.query.get(ticket.get("b"))
+        if not board or not board.is_open():
+            raise CheckinRefused(BOARD_CLOSED_MESSAGE, 409, reason="board_closed")
     return data, ticket, entry, start_dt, end_dt
 
 
@@ -196,12 +210,21 @@ def checkin_start():
     if steps["face"] and user.face is None:
         raise CheckinRefused(FACE_NOT_ENROLLED_MESSAGE, 403, reason="face_not_enrolled")
 
-    ticket = {
-        "uid": user.id, "t": entry.id, "d": day.isoformat(),
+    ticket = _new_ticket(user, entry, day)
+    return _reply(ticket, steps=steps, session=_session_info(entry, start_dt, end_dt))
+
+
+def _new_ticket(user, entry, day, **extra) -> dict:
+    return {
+        "uid": user.id, "t": entry.id, "d": day.isoformat(), "m": "qr",
         "code": False, "loc": False, "lat": None, "lng": None, "dist": None,
         "dir": secrets.choice(("left", "right")),
+        **extra,
     }
-    return _reply(ticket, steps=steps, session={
+
+
+def _session_info(entry, start_dt, end_dt) -> dict:
+    return {
         "timetable_id": entry.id,
         "course_name": entry.course_name,
         "batch": entry.batch,
@@ -210,7 +233,82 @@ def checkin_start():
         "scheduled_start": start_dt.isoformat() if start_dt else None,
         "scheduled_end": end_dt.isoformat() if end_dt else None,
         "code_digits": current_app.config["STUDENT_CODE_DIGITS"],
-    })
+        "board_code_digits": board_code.BOARD_CODE_DIGITS,
+    }
+
+
+# ---------- Board-code check-in (no QR, no screen) ----------
+#
+# current-class -> board (code) -> location -> complete (face). The board
+# code replaces both the QR scan and the rotating code; the ticket records
+# method 'board' and the board session, so closing it stops the flow.
+
+@student_bp.get("/current-class")
+@roles_required("student")
+def current_class():
+    """The class running now for the student's batch (from 30 minutes before
+    it starts until it ends), and whether board check-in is open for it."""
+    user = current_user()
+    settings = get_all_settings()
+    today = date.today()
+    now = datetime.now()
+    if not user.batch:
+        return jsonify({"session": None})
+
+    for entry in get_batch_classes(user.batch, today, get_no_class_dates(settings)):
+        start_dt, end_dt = scheduled_datetimes(entry, today)
+        end_dt = end_dt or start_dt + timedelta(hours=2)
+        if not (start_dt - timedelta(minutes=CHECKIN_OPENS_MINUTES_BEFORE) <= now <= end_dt):
+            continue
+        record = StudentAttendance.query.filter_by(student_id=user.id, timetable_id=entry.id, date=today).first()
+        return jsonify({
+            "session": _session_info(entry, start_dt, end_dt),
+            "board_open": board_code.open_session(entry.id, today, now) is not None,
+            "status": record.status if record else "not_yet",
+            "checked_in": bool(record and record.checkin_at),
+        })
+    return jsonify({"session": None})
+
+
+@student_bp.post("/checkin/board")
+@roles_required("student")
+@limiter.limit("10/minute", key_func=lambda: f"user:{current_user().id}")
+def checkin_board():
+    user = current_user()
+    settings = get_all_settings()
+    data = request.get_json(silent=True) or {}
+    timetable_id = data.get("timetable_id")
+    if not isinstance(timetable_id, int) or isinstance(timetable_id, bool):
+        raise CheckinRefused("Choose the class you are checking in to.")
+    day = date.today()
+    entry, start_dt, end_dt = _open_session(user, timetable_id, day, settings)
+
+    steps = _steps(settings)
+    if steps["face"] and user.face is None:
+        raise CheckinRefused(FACE_NOT_ENROLLED_MESSAGE, 403, reason="face_not_enrolled")
+    if board_code.failed_attempts(user.id, entry.id, day) >= board_code.BOARD_CODE_MAX_WRONG:
+        raise CheckinRefused(BOARD_LOCKED_MESSAGE, 429, reason="board_locked")
+    board = board_code.open_session(entry.id, day)
+    if not board:
+        raise CheckinRefused(BOARD_NOT_OPEN_MESSAGE, 409, reason="board_not_open")
+
+    code = str(data.get("code") or "")[:16]
+    matched = board_code.codes_match(board.code, code)
+    db.session.add(BoardCodeAttempt(student_id=user.id, timetable_id=entry.id, date=day, success=matched))
+    db.session.commit()
+    if not matched:
+        remaining = board_code.BOARD_CODE_MAX_WRONG - board_code.failed_attempts(user.id, entry.id, day)
+        if remaining <= 0:
+            raise CheckinRefused(BOARD_LOCKED_MESSAGE, 429, reason="board_locked")
+        raise CheckinRefused(
+            f"That isn't the code on the board. {remaining} attempt{'s' if remaining != 1 else ''} left.",
+            403, reason="board_wrong_code", attempts_remaining=remaining,
+        )
+
+    # The board code proves both the class and presence in the room, so it
+    # counts as the code step whatever student_verification_mode says.
+    ticket = _new_ticket(user, entry, day, m="board", b=board.id, code=True)
+    return _reply(ticket, steps={**steps, "code": True}, session=_session_info(entry, start_dt, end_dt))
 
 
 @student_bp.post("/checkin/code")
@@ -235,7 +333,7 @@ def checkin_location():
     user = current_user()
     settings = get_all_settings()
     data, ticket, _, _, _ = _ticket_session(user, settings)
-    if _steps(settings)["code"] and not ticket["code"]:
+    if (_steps(settings)["code"] or ticket.get("m") == "board") and not ticket["code"]:
         raise CheckinRefused("Please enter the class code first.")
 
     lat, lng = parse_coords(data.get("lat"), data.get("lng"))
@@ -265,6 +363,8 @@ def checkin_complete():
     day = date.fromisoformat(ticket["d"])
 
     steps = _steps(settings)
+    if ticket.get("m") == "board":
+        steps["code"] = True
     if (steps["code"] and not ticket["code"]) or (steps["location"] and not ticket["loc"]):
         raise CheckinRefused("Please complete the earlier check-in steps first.")
 
@@ -313,6 +413,7 @@ def _record_checkin(user, entry, day, start_dt, end_dt, ticket, settings) -> Stu
     record.checkin_lng = ticket["lng"]
     record.checkin_distance_m = ticket["dist"]
     record.status = compute_student_checkin_status(start_dt, now, settings)
+    record.checkin_method = "board" if ticket.get("m") == "board" else "qr"
 
     try:
         db.session.commit()

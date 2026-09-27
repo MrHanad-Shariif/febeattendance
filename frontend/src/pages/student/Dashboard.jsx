@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
-import { AlertTriangle, CalendarOff, Clock, DoorOpen, QrCode, User } from "lucide-react";
+import { AlertTriangle, CalendarOff, Clock, DoorOpen, PenLine, QrCode, User } from "lucide-react";
 import client, { apiErrorMessage } from "@/api/client";
 import StatusBadge from "@/components/StatusBadge.jsx";
 import { Alert, PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn, formatTime } from "@/lib/utils";
@@ -21,11 +23,15 @@ export default function StudentDashboard() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
+  // The class running now for this batch, as the server sees it (campus
+  // time), so the board-code button doesn't depend on the phone's clock.
+  const [current, setCurrent] = useState(null);
   async function load(initial = false) {
     if (initial) setLoading(true);
     try {
-      const res = await client.get("/student/today");
+      const [res, cur] = await Promise.all([client.get("/student/today"), client.get("/student/current-class")]);
       setRows(res.data);
+      setCurrent(cur.data.session && !cur.data.checked_in ? cur.data : null);
       setLoadError("");
     } catch (err) {
       setLoadError(apiErrorMessage(err, "Could not load today's classes"));
@@ -44,10 +50,30 @@ export default function StudentDashboard() {
     <div className="space-y-6">
       <PageHeader
         title="Today"
-        description="To check in, scan the QR code on your lecturer's screen during class, then follow the steps."
+        description="To check in, scan the QR code on your lecturer's screen during class, or type the code your lecturer writes on the board."
       />
 
       {loadError && <Alert>{loadError}</Alert>}
+
+      {current && !rows.find((r) => r.timetable_id === current.session.timetable_id)?.blocked && (
+        <Card className="border-primary/50 bg-primary/5">
+          <CardContent className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="font-semibold">{current?.session.course_name} is on now</p>
+              <p className="text-sm text-muted-foreground">
+                {current?.board_open
+                  ? "Your lecturer has opened board check-in. Type the code on the board. No QR scan needed."
+                  : "If your lecturer writes a code on the board, check in here. Otherwise scan the QR code on their screen."}
+              </p>
+            </div>
+            <Button asChild size="lg">
+              <Link to="/student-checkin?board=1">
+                <PenLine /> Check in to current class
+              </Link>
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
       {loading ? (
         <div className="space-y-3">
@@ -107,7 +133,7 @@ export default function StudentDashboard() {
                       </span>
                     ) : canCheckIn ? (
                       <span className="flex items-center gap-2 text-sm text-muted-foreground">
-                        <QrCode className="h-4 w-4 text-primary" /> Scan the QR code on your lecturer's screen to check in.
+                        <QrCode className="h-4 w-4 text-primary" /> Scan the QR code on your lecturer's screen, or use the board code, to check in.
                       </span>
                     ) : (
                       <span className="text-sm text-muted-foreground">Checked in: {formatTime(row.checkin_at)}</span>

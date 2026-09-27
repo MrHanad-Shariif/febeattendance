@@ -3,8 +3,10 @@ import { Pencil } from "lucide-react";
 import client, { apiErrorMessage } from "../api/client";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { useAuth } from "@/context/AuthContext.jsx";
 
 export default function RemarksCell({ record, onSaved }) {
+  const { can } = useAuth();
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(record.remarks || "");
   const [saving, setSaving] = useState(false);
@@ -64,6 +66,9 @@ export default function RemarksCell({ record, onSaved }) {
   }
 
   const justified = record.remarks && record.remarks.trim();
+  if (!can("lecturer_attendance:edit")) {
+    return justified ? <span className="text-xs">{record.remarks}</span> : <span className="text-xs text-muted-foreground">—</span>;
+  }
   return (
     <button onClick={() => setEditing(true)} className="group inline-flex items-center gap-1.5 text-left text-xs">
       {justified ? (

@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/context/AuthContext.jsx";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -41,6 +42,9 @@ function Field({ label, hint, children, className }) {
 }
 
 export default function Timetable() {
+  const { can } = useAuth();
+  const canEdit = can("timetable:edit");
+  const canDelete = can("timetable:delete");
   const [entries, setEntries] = useState([]);
   const [lecturers, setLecturers] = useState([]);
   const [form, setForm] = useState(emptyForm);
@@ -193,27 +197,33 @@ export default function Timetable() {
         enableSorting: false,
         header: "",
         meta: { noExport: true, className: "w-12 text-right" },
-        cell: ({ row }) => (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Row actions">
-                <MoreHorizontal />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onSelect={() => openEdit(row.original)}>
-                <Pencil /> Edit
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => setToDelete(row.original)}>
-                <Trash2 /> Delete
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        ),
+        cell: ({ row }) =>
+          (canEdit || canDelete) && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Row actions">
+                  <MoreHorizontal />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {canEdit && (
+                  <DropdownMenuItem onSelect={() => openEdit(row.original)}>
+                    <Pencil /> Edit
+                  </DropdownMenuItem>
+                )}
+                {canEdit && canDelete && <DropdownMenuSeparator />}
+                {canDelete && (
+                  <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => setToDelete(row.original)}>
+                    <Trash2 /> Delete
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ),
       },
     ],
-    []
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [canEdit, canDelete]
   );
 
   return (
@@ -222,9 +232,11 @@ export default function Timetable() {
         title="Timetable"
         description="Every recurring class, by lecturer, batch and weekday."
         actions={
-          <Button onClick={openAdd}>
-            <Plus /> Add class
-          </Button>
+          can("timetable:add") && (
+            <Button onClick={openAdd}>
+              <Plus /> Add class
+            </Button>
+          )
         }
       />
 

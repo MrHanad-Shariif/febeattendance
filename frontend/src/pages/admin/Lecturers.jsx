@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Ban, CheckCircle2, MailPlus, MoreHorizontal, Send, Trash2, UserPlus } from "lucide-react";
+import { Ban, CheckCircle2, MailPlus, MoreHorizontal, Pencil, Send, Trash2, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import client, { apiErrorMessage } from "@/api/client";
 import StatusBadge from "@/components/StatusBadge.jsx";
@@ -11,8 +11,10 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { initials } from "@/lib/utils";
+import { useAuth } from "@/context/AuthContext.jsx";
 
 const STATUS_ORDER = ["invited", "active", "disabled"];
 const STATUS_OPTIONS = [
@@ -22,6 +24,9 @@ const STATUS_OPTIONS = [
 ];
 
 export default function Lecturers() {
+  const { can } = useAuth();
+  const canEdit = can("lecturers:edit");
+  const canDelete = can("lecturers:delete");
   const [lecturers, setLecturers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -30,6 +35,9 @@ export default function Lecturers() {
   const [email, setEmail] = useState("");
   const [creating, setCreating] = useState(false);
   const [toDelete, setToDelete] = useState(null);
+  const [editing, setEditing] = useState(null);
+  const [editForm, setEditForm] = useState({ name: "", email: "", status: "" });
+  const [saving, setSaving] = useState(false);
 
   function load() {
     setLoading(true);
@@ -78,6 +86,35 @@ export default function Lecturers() {
       load();
     } catch (err) {
       toast.error(apiErrorMessage(err));
+    }
+  }
+
+  function openEdit(l) {
+    setEditForm({
+      name: l.name,
+      email: l.email.endsWith("@example.invalid") ? "" : l.email,
+      status: l.status,
+    });
+    setEditing(l);
+  }
+
+  async function handleUpdate(e) {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      const res = await client.put(`/admin/lecturers/${editing.id}`, editForm);
+      const emailChanged = res.data.email !== editing.email;
+      toast.success(
+        emailChanged && res.data.status === "invited"
+          ? `${res.data.name} updated — invite sent to ${res.data.email}`
+          : `${res.data.name} updated`
+      );
+      setEditing(null);
+      load();
+    } catch (err) {
+      toast.error(apiErrorMessage(err));
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -138,6 +175,7 @@ export default function Lecturers() {
         meta: { noExport: true, className: "w-12 text-right" },
         cell: ({ row }) => {
           const l = row.original;
+          if (!canEdit && !canDelete) return null;
           return (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -146,25 +184,34 @@ export default function Lecturers() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                {l.status === "invited" && (
+                {canEdit && (
+                  <DropdownMenuItem onSelect={() => openEdit(l)}>
+                    <Pencil /> Edit
+                  </DropdownMenuItem>
+                )}
+                {canEdit && l.status === "invited" && (
                   <DropdownMenuItem onSelect={() => handleResend(l)}>
                     <Send /> Resend invite
                   </DropdownMenuItem>
                 )}
-                {l.status === "active" && (
+                {canEdit && l.status === "active" && (
                   <DropdownMenuItem onSelect={() => handleStatusChange(l, "disabled")}>
                     <Ban /> Disable
                   </DropdownMenuItem>
                 )}
-                {l.status === "disabled" && (
+                {canEdit && l.status === "disabled" && (
                   <DropdownMenuItem onSelect={() => handleStatusChange(l, "active")}>
                     <CheckCircle2 /> Enable
                   </DropdownMenuItem>
                 )}
-                <DropdownMenuSeparator />
-                <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => setToDelete(l)}>
-                  <Trash2 /> Delete
-                </DropdownMenuItem>
+                {canDelete && (
+                  <>
+                    {canEdit && <DropdownMenuSeparator />}
+                    <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => setToDelete(l)}>
+                      <Trash2 /> Delete
+                    </DropdownMenuItem>
+                  </>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           );
@@ -180,9 +227,11 @@ export default function Lecturers() {
         title="Lecturers"
         description="Invite lecturers and manage their accounts."
         actions={
-          <Button onClick={() => setAddOpen(true)}>
-            <UserPlus /> Add lecturer
-          </Button>
+          can("lecturers:add") && (
+            <Button onClick={() => setAddOpen(true)}>
+              <UserPlus /> Add lecturer
+            </Button>
+          )
         }
       />
 
@@ -196,7 +245,7 @@ export default function Lecturers() {
         searchPlaceholder="Search name or email..."
         filters={[{ columnId: "status", label: "Status", options: STATUS_OPTIONS }]}
         exportName="lecturers"
-        selectable
+        selectable={canEdit}
         renderBulkActions={(selected, clear) => (
           <>
             <Button
@@ -253,6 +302,64 @@ export default function Lecturers() {
               </Button>
               <Button type="submit" disabled={creating}>
                 {creating ? "Sending invite..." : "Send invite"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>
+        <DialogContent>
+          <form onSubmit={handleUpdate} className="space-y-4">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Pencil className="h-5 w-5 text-primary" /> Edit lecturer
+              </DialogTitle>
+              <DialogDescription>
+                {editing?.status === "invited"
+                  ? "Changing the email re-sends the invite to the new address."
+                  : "Update the lecturer's details. They sign in with the new email from now on."}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-lec-name">Full name</Label>
+              <Input
+                id="edit-lec-name"
+                required
+                value={editForm.name}
+                onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-lec-email">Email</Label>
+              <Input
+                id="edit-lec-email"
+                type="email"
+                required
+                value={editForm.email}
+                onChange={(e) => setEditForm((f) => ({ ...f, email: e.target.value }))}
+              />
+            </div>
+            {editing?.status !== "invited" && (
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-lec-status">Status</Label>
+                <Select value={editForm.status} onValueChange={(status) => setEditForm((f) => ({ ...f, status }))}>
+                  <SelectTrigger id="edit-lec-status">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="active">Active</SelectItem>
+                    <SelectItem value="disabled">Disabled</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setEditing(null)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={saving}>
+                {saving ? "Saving..." : "Save changes"}
               </Button>
             </DialogFooter>
           </form>

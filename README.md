@@ -35,17 +35,19 @@ It replaces the faculty's Google Sheet ("Latest Lecturer Attendance") and keeps 
 **Lecturers**
 - One check-in and one check-out per day, however many classes they teach (measured against the first class's start and the last class's end).
 - Campus verification by rotating kiosk code and/or geolocation (mode is configurable).
-- Show each class session's own QR code and rotating 6-digit class code for students (they only work for that batch); review and correct their own students' attendance (a remark is mandatory and recorded).
+- Two ways to run student check-in for each class: show the session's own QR code and rotating 6-digit class code on a screen, or (**board code**) tap Start on a phone and write a random 4-digit code on the board, with a live check-in count, "New code" and "Close check-in". Both only work for that batch's session.
+- Review and correct their own students' attendance (a remark is mandatory and recorded).
 
 **Students**
 - Self-registration (full name, email, password, student ID, batch) with a live face registration and email confirmation; pre-imported roster records are *claimed* by student ID.
-- Step-by-step check-in per session: scan the lecturer's QR code → sign in → class code → location → live face scan with a head turn, matched to the registered face. Personal timetable and attendance report.
+- Step-by-step check-in per session: scan the lecturer's QR code → sign in → class code → location → live face scan with a head turn, matched to the registered face. Or, when the lecturer uses a board code: **Check in to current class** → board code → location → face scan. Five wrong board codes lock the student out of that class. Personal timetable and attendance report.
 - Automatic block and retake flag when absences reach the configured threshold (default 25 %).
 
 **Administrators**
 - Dashboard with KPI cards, attendance trend (line), status breakdown and weekday pattern (bar), "needs attention" and live check-ins.
 - Advanced data tables everywhere: search, filters, sorting, column visibility, pagination, row selection, CSV export.
-- Manage lecturers, students, admins, timetable and all rules; monthly reports with justified / unjustified absences.
+- Manage lecturers, students, timetable and all rules; monthly reports with justified / unjustified absences; a **Check-in methods** report (QR vs board code per class session). Every report is under **Reports → All reports**.
+- **User management (Authentication → Users, Roles, Permissions)**: fine-grained RBAC. Each screen allows some of View / Add / Edit / Delete (`timetable:edit`, `students:delete`, …); roles bundle these permissions and users hold roles. Built-in roles: Super Admin (locked), Viewer, Attendance Officer, Timetable Manager. Lecturers can be given roles too. People can only grant permissions they hold, only a Super Admin can make or change a Super Admin, nobody edits their own access, and there is always an active Super Admin. On upgrade, existing admins become Super Admins.
 - Printable QR codes, kiosk display link, printable student reports.
 
 **Platform**
@@ -178,6 +180,7 @@ Configurable in **Admin → Settings** (defaults from the original spreadsheet):
 | `verification_mode` | both | `both`, `either`, `code_only`, `location_only`, `off` |
 | `student_absence_threshold_percent` | 25 | Absence share of the semester's planned sessions that blocks check-in and flags a retake |
 | `no_class_dates` | – | Holidays, e.g. `2026-10-01,2026-12-25` |
+| `board_code_close_after_minutes` | 20 | Board-code check-in closes by itself this long after the class starts (0 = at the end of the class) |
 
 Students can check in from 30 minutes before a session starts until it ends.
 

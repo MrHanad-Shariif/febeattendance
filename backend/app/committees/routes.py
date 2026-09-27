@@ -15,7 +15,7 @@ from app.extensions import db
 from app.models import (
     Committee, CommitteeMember, FacultyRole, Meeting, MeetingMinutes, Task, TaskAttachment, User, utcnow,
 )
-from app.utils.authz import current_user, roles_required
+from app.utils.authz import current_user, permission_required, roles_required
 from app.utils.notify import notify, subject_for
 from app.utils.permissions import (
     can_manage_tasks, can_schedule_meeting, can_view_all_committees, can_view_committee, can_view_reports,
@@ -112,14 +112,14 @@ def list_staff():
 # ---------- Faculty roles (Dean, Administration Team) ----------
 
 @committees_bp.get("/faculty-roles")
-@roles_required("admin")
+@permission_required("faculty_roles:view")
 def list_faculty_roles():
     rows = FacultyRole.query.join(User, FacultyRole.user_id == User.id).order_by(FacultyRole.role, User.name).all()
     return jsonify([r.to_dict() for r in rows])
 
 
 @committees_bp.post("/faculty-roles")
-@roles_required("admin")
+@permission_required("faculty_roles:edit")
 def grant_faculty_role():
     data = request.get_json(silent=True) or {}
     user = _staff_user(data.get("user_id"))
@@ -133,7 +133,7 @@ def grant_faculty_role():
 
 
 @committees_bp.delete("/faculty-roles/<int:role_id>")
-@roles_required("admin")
+@permission_required("faculty_roles:edit")
 def revoke_faculty_role(role_id):
     row = FacultyRole.query.get_or_404(role_id)
     db.session.delete(row)
@@ -177,7 +177,7 @@ def get_committee(committee_id):
 
 
 @committees_bp.post("/committees")
-@roles_required("admin")
+@permission_required("committees:add")
 def create_committee():
     data = request.get_json(silent=True) or {}
     name = clean_text(data.get("name"), "Name", max_len=200, required=True)
@@ -200,7 +200,7 @@ def create_committee():
 
 
 @committees_bp.put("/committees/<int:committee_id>")
-@roles_required("admin")
+@permission_required("committees:edit")
 def update_committee(committee_id):
     committee = _committee_or_404(committee_id)
     data = request.get_json(silent=True) or {}
@@ -224,7 +224,7 @@ def update_committee(committee_id):
 
 
 @committees_bp.delete("/committees/<int:committee_id>")
-@roles_required("admin")
+@permission_required("committees:delete")
 def delete_committee(committee_id):
     committee = _committee_or_404(committee_id)
     has_records = (
@@ -240,7 +240,7 @@ def delete_committee(committee_id):
 
 
 @committees_bp.post("/committees/<int:committee_id>/members")
-@roles_required("admin")
+@permission_required("committees:edit")
 def add_member(committee_id):
     committee = _committee_or_404(committee_id)
     data = request.get_json(silent=True) or {}
@@ -257,7 +257,7 @@ def add_member(committee_id):
 
 
 @committees_bp.delete("/committees/<int:committee_id>/members/<int:user_id>")
-@roles_required("admin")
+@permission_required("committees:edit")
 def remove_member(committee_id, user_id):
     committee = _committee_or_404(committee_id)
     row = CommitteeMember.query.filter_by(committee_id=committee.id, user_id=user_id).first_or_404()

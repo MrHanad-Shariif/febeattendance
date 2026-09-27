@@ -58,11 +58,19 @@ import FacultyRoles from "./pages/admin/FacultyRoles.jsx";
 
 import { WithCommitteeSummary } from "./components/committees/NotificationBell.jsx";
 
+// User management (fine-grained RBAC) and the reports hub
+import Users from "./pages/access/Users.jsx";
+import Roles from "./pages/access/Roles.jsx";
+import Permissions from "./pages/access/Permissions.jsx";
+import AllReports from "./pages/reports/AllReports.jsx";
+import CheckinMethods from "./pages/reports/CheckinMethods.jsx";
+import { homePath } from "./components/layout/nav-config";
+
 const STAFF = ["admin", "lecturer"];
 
 function Home() {
   const { user } = useAuth();
-  if (user?.role === "admin") return <Navigate to="/admin" replace />;
+  if (user?.role === "admin") return <Navigate to={homePath(user)} replace />;
   if (user?.role === "student") return <StudentDashboard />;
   return (
     <WithCommitteeSummary>
@@ -73,6 +81,11 @@ function Home() {
 
 function guard(roles, element) {
   return <ProtectedRoute roles={roles}>{element}</ProtectedRoute>;
+}
+
+// Management pages: any staff account holding one of `perms` (RBAC).
+function allow(perms, element) {
+  return <ProtectedRoute roles={STAFF} perms={perms}>{element}</ProtectedRoute>;
 }
 
 // Target of a printed check-in QR code. Scanning the other group's code shows
@@ -95,7 +108,7 @@ export default function App() {
       <Route path="/kiosk" element={<Kiosk />} />
 
       {/* Standalone (no app chrome) */}
-      <Route path="/print/student-report/:id" element={guard(["admin"], <StudentReportPrint />)} />
+      <Route path="/print/student-report/:id" element={allow(["students:view", "reports:view"], <StudentReportPrint />)} />
       <Route path="/print/minutes/:id" element={guard(STAFF, <MinutesPrint />)} />
       <Route path="/print/report" element={guard(STAFF, <ReportPrint />)} />
       <Route path="/class-code" element={guard(["lecturer", "admin"], <ClassCode />)} />
@@ -122,19 +135,26 @@ export default function App() {
         <Route path="/student-timetable" element={guard(["student"], <StudentTimetable />)} />
         <Route path="/student-report" element={guard(["student"], <StudentReport />)} />
 
-        {/* Admin */}
-        <Route path="/admin" element={guard(["admin"], <WithCommitteeSummary><AdminDashboard /></WithCommitteeSummary>)} />
-        <Route path="/admin/overview" element={guard(["admin"], <Overview />)} />
-        <Route path="/admin/lecturers" element={guard(["admin"], <Lecturers />)} />
-        <Route path="/admin/timetable" element={guard(["admin"], <Timetable />)} />
-        <Route path="/admin/reports" element={guard(["admin"], <Reports />)} />
-        <Route path="/admin/settings" element={guard(["admin"], <Settings />)} />
-        <Route path="/admin/students" element={guard(["admin"], <Students />)} />
-        <Route path="/admin/students/:id/report" element={guard(["admin"], <AdminStudentReport />)} />
-        <Route path="/admin/student-overview" element={guard(["admin"], <StudentOverview />)} />
-        <Route path="/admin/student-reports" element={guard(["admin"], <StudentReports />)} />
-        <Route path="/admin/committees" element={guard(["admin"], <AdminCommittees />)} />
-        <Route path="/admin/faculty-roles" element={guard(["admin"], <FacultyRoles />)} />
+        {/* Management screens (each needs its RBAC permission; the API checks too) */}
+        <Route path="/admin" element={allow(["dashboard:view"], <WithCommitteeSummary><AdminDashboard /></WithCommitteeSummary>)} />
+        <Route path="/admin/overview" element={allow(["lecturer_attendance:view"], <Overview />)} />
+        <Route path="/admin/lecturers" element={allow(["lecturers:view"], <Lecturers />)} />
+        <Route path="/admin/timetable" element={allow(["timetable:view"], <Timetable />)} />
+        <Route path="/admin/reports" element={allow(["reports:view"], <Reports />)} />
+        <Route path="/admin/settings" element={allow(["settings:view"], <Settings />)} />
+        <Route path="/admin/students" element={allow(["students:view"], <Students />)} />
+        <Route path="/admin/students/:id/report" element={allow(["students:view", "reports:view"], <AdminStudentReport />)} />
+        <Route path="/admin/student-overview" element={allow(["student_attendance:view"], <StudentOverview />)} />
+        <Route path="/admin/student-reports" element={allow(["reports:view"], <StudentReports />)} />
+        <Route path="/admin/checkin-methods" element={allow(["reports:view"], <CheckinMethods />)} />
+        <Route path="/admin/committees" element={allow(["committees:add", "committees:edit", "committees:delete"], <AdminCommittees />)} />
+        <Route path="/admin/faculty-roles" element={allow(["faculty_roles:view"], <FacultyRoles />)} />
+        <Route path="/reports" element={guard(STAFF, <AllReports />)} />
+
+        {/* Authentication: users, roles, permissions */}
+        <Route path="/access/users" element={allow(["users:view"], <Users />)} />
+        <Route path="/access/roles" element={allow(["roles:view"], <Roles />)} />
+        <Route path="/access/permissions" element={allow(["roles:view", "users:view"], <Permissions />)} />
 
         {/* Committees & task management (lecturers and staff; the API checks each role) */}
         <Route path="/committees" element={guard(STAFF, <CommitteeList scope="mine" />)} />

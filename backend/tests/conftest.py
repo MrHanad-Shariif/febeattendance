@@ -5,6 +5,7 @@ from app.config import TestingConfig
 from app.extensions import db
 from app.models import User
 from app.utils.authz import issue_token
+from app.utils.rbac import ensure_rbac_seeded, grant_super_admin
 from app.utils.settings import ensure_defaults_seeded
 
 
@@ -17,6 +18,7 @@ def app(tmp_path):
     with app.app_context():
         db.create_all()
         ensure_defaults_seeded()
+        ensure_rbac_seeded()
         yield app
         db.session.remove()
         db.drop_all()
@@ -37,7 +39,9 @@ def make_user(email="user@example.com", role="lecturer", status="active", passwo
 
 @pytest.fixture()
 def admin(app):
-    return make_user("admin@example.com", role="admin")
+    user = make_user("admin@example.com", role="admin")
+    grant_super_admin(user)
+    return user
 
 
 @pytest.fixture()

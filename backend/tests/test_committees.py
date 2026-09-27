@@ -10,6 +10,7 @@ from app.models import (
     Committee, CommitteeMember, EmailOutbox, FacultyRole, InformationPost, Meeting, Notification, Setting, Task,
     TaskEvent,
 )
+from app.utils.rbac import grant_super_admin
 from tests.conftest import auth_header, make_user
 
 PDF = b"%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n"
@@ -26,6 +27,7 @@ def people(app):
     dean = make_user("dean@example.com")
     team = make_user("team@example.com")
     admin = make_user("admin@example.com", role="admin")
+    grant_super_admin(admin)
     student = make_user("student@example.com", role="student", student_id_number="S1", batch="B1")
 
     committee = Committee(name="Laboratory Committee", kind="committee", chairperson_id=chair.id)

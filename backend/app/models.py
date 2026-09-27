@@ -238,6 +238,12 @@ class StudentAttendance(db.Model):
     modified_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
     modified_by_role = db.Column(db.String(20), nullable=True)
 
+    # How the student proved they were in the room: 'qr' (lecturer's screen:
+    # QR + rotating code) or 'board' (short code written on the board). NULL
+    # for rows created without a check-in (auto-absent, overrides). Reports
+    # use it to spot classes where board-code attendance looks suspicious.
+    checkin_method = db.Column(db.String(20), nullable=True)
+
     created_at = db.Column(db.DateTime, default=utcnow)
     updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
 
@@ -275,6 +281,7 @@ class StudentAttendance(db.Model):
             "remarks": self.remarks,
             "modified_by_name": self.modified_by.name if self.modified_by else None,
             "modified_by_role": self.modified_by_role,
+            "checkin_method": self.checkin_method,
         }
 
 
@@ -309,6 +316,7 @@ class Setting(db.Model):
         "semester_start_date": ("2026-10-01", "First day of the current semester, used to work out each course's total planned sessions for the 25% attendance rule."),
         "semester_end_date": ("2027-02-28", "Last day of the current semester, used the same way as semester_start_date."),
         "dean_task_override": ("off", "on = the Dean may assign and manage tasks and meetings in any committee, not only committees they chair. off = only each committee's chairperson can."),
+        "board_code_close_after_minutes": ("20", "Board check-in closes by itself this many minutes after the class starts, if the lecturer hasn't closed it. Use 0 to keep it open until the class ends."),
     }
 
     def to_dict(self):
@@ -345,6 +353,140 @@ class FaceCheckAttempt(db.Model):
     result = db.Column(db.String(20), nullable=False)  # match | mismatch | no_liveness | bad_image
     score = db.Column(db.Float, nullable=True)
     created_at = db.Column(db.DateTime, default=utcnow)
+
+
+class BoardSession(db.Model):
+    """Board-code check-in for one class session (timetable entry + date).
+
+    The lecturer (or staff acting for them) taps Start and gets a short random
+    code to write on the board. Students type it instead of scanning the QR
+    and reading the rotating code; location and face checks are unchanged.
+    It stays open until closed_at is set or closes_at passes. "New code"
+    replaces `code` on the same row, so students already past the code step
+    are not thrown out."""
+    __tablename__ = "board_sessions"
+
+    id = db.Column(db.Integer, primary_key=True)
+    timetable_id = db.Column(db.Integer, db.ForeignKey("timetable.id", ondelete="CASCADE"), nullable=False, index=True)
+    date = db.Column(db.Date, nullable=False)
+    code = db.Column(db.String(8), nullable=False)
+    opened_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+    closes_at = db.Column(db.DateTime, nullable=False)
+    closed_at = db.Column(db.DateTime, nullable=True)
+    code_changes = db.Column(db.Integer, nullable=False, default=0)
+    started_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    closed_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    timetable_entry = db.relationship("Timetable")
+    started_by = db.relationship("User", foreign_keys=[started_by_id])
+    closed_by = db.relationship("User", foreign_keys=[closed_by_id])
+
+    def is_open(self, now=None) -> bool:
+        now = now or utcnow()
+        return self.closed_at is None and now < self.closes_at
+
+    def to_dict(self, include_code: bool = False):
+        now = utcnow()
+        data = {
+            "id": self.id,
+            "timetable_id": self.timetable_id,
+            "date": self.date.isoformat() if self.date else None,
+            "open": self.is_open(now),
+            "opened_at": self.opened_at.isoformat() if self.opened_at else None,
+            "closes_at": self.closes_at.isoformat() if self.closes_at else None,
+            "closed_at": self.closed_at.isoformat() if self.closed_at else None,
+            "seconds_left": max(0, int((self.closes_at - now).total_seconds())) if self.is_open(now) else 0,
+            "code_changes": self.code_changes,
+            "started_by_name": self.started_by.name if self.started_by else None,
+            "closed_by_name": self.closed_by.name if self.closed_by else None,
+        }
+        if include_code:
+            data["code"] = self.code
+        return data
+
+
+class BoardCodeAttempt(db.Model):
+    """Every board code a student types. Wrong ones count toward the
+    per-class lockout, which makes guessing a 4-digit code pointless."""
+    __tablename__ = "board_code_attempts"
+
+    id = db.Column(db.Integer, primary_key=True)
+    student_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    timetable_id = db.Column(db.Integer, db.ForeignKey("timetable.id", ondelete="CASCADE"), nullable=False)
+    date = db.Column(db.Date, nullable=False)
+    success = db.Column(db.Boolean, nullable=False, default=False)
+    created_at = db.Column(db.DateTime, default=utcnow)
+
+
+# ---------------------------------------------------------------------------
+# User management: fine-grained role-based access control.
+#
+# Permissions are "<resource>:<action>" codes (e.g. "timetable:edit") from the
+# catalogue in utils/rbac.py. Roles bundle permissions; users hold roles
+# (many-to-many both ways), never raw permissions. User.role stays the
+# *account type* (admin / lecturer / student): what a staff account may do
+# in the management screens comes only from its roles.
+# ---------------------------------------------------------------------------
+
+role_permissions = db.Table(
+    "role_permissions",
+    db.Column("role_id", db.Integer, db.ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True),
+    db.Column("permission_id", db.Integer, db.ForeignKey("permissions.id", ondelete="CASCADE"), primary_key=True),
+)
+
+user_roles = db.Table(
+    "user_roles",
+    db.Column("user_id", db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
+    db.Column("role_id", db.Integer, db.ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True),
+)
+
+
+class Permission(db.Model):
+    __tablename__ = "permissions"
+
+    id = db.Column(db.Integer, primary_key=True)
+    code = db.Column(db.String(80), unique=True, nullable=False)  # "<resource>:<action>"
+    resource = db.Column(db.String(50), nullable=False)
+    action = db.Column(db.String(20), nullable=False)  # view | add | edit | delete
+    description = db.Column(db.String(255), nullable=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "code": self.code,
+            "resource": self.resource,
+            "action": self.action,
+            "description": self.description,
+        }
+
+
+class Role(db.Model):
+    __tablename__ = "roles"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), unique=True, nullable=False)
+    description = db.Column(db.String(500), nullable=True)
+    # System roles (Super Admin) can't be renamed, edited or deleted.
+    is_system = db.Column(db.Boolean, nullable=False, default=False)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+
+    permissions = db.relationship("Permission", secondary=role_permissions, order_by="Permission.code")
+    users = db.relationship("User", secondary=user_roles, back_populates="roles")
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "is_system": self.is_system,
+            "permissions": [p.code for p in self.permissions],
+            "user_count": len(self.users),
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+User.roles = db.relationship("Role", secondary=user_roles, back_populates="users", order_by="Role.name")
 
 
 class PasswordResetToken(db.Model):

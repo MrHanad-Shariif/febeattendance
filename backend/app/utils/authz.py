@@ -67,6 +67,27 @@ def roles_required(*roles):
     return decorator
 
 
+STAFF_ROLES = ("admin", "lecturer")
+
+
+def permission_required(*codes):
+    """Require an active staff account holding at least one of ``codes``
+    (fine-grained RBAC, see utils/rbac.py). Like roles_required, it re-reads
+    the user's roles from the database on every request."""
+    from app.utils.rbac import has_any_permission
+
+    def decorator(fn):
+        @wraps(fn)
+        def check(*args, **kwargs):
+            if not has_any_permission(g.current_user, codes):
+                return jsonify({"error": "You do not have permission to do that."}), 403
+            return fn(*args, **kwargs)
+
+        return roles_required(*STAFF_ROLES)(check)
+
+    return decorator
+
+
 def current_user() -> User | None:
     user = g.get("current_user")
     if user is not None:

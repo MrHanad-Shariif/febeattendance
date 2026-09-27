@@ -1,10 +1,13 @@
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from flask import Response, jsonify, request, current_app
 
+from app.extensions import db
 from app.lecturer import lecturer_bp
-from app.models import Attendance, Timetable, User, StudentAttendance
+from app.models import Attendance, BoardSession, Timetable, User, StudentAttendance
 from app.utils.authz import roles_required, current_user
+from app.utils import board_code
+from app.utils.rbac import has_permission
 from app.utils.checkin_session import make_session_token
 from app.utils.qr import generate_qr_png
 from app.utils.schedule import get_day_classes, scheduled_datetimes, teaches_on
@@ -48,12 +51,14 @@ def my_history():
     return jsonify(rows)
 
 
-def _session_entry(user) -> Timetable:
-    """The timetable entry named by ?timetable_id=, if this user may show its
-    code: the lecturer who teaches it (or any admin), and only on a day it meets."""
-    timetable_id = request.args.get("timetable_id", type=int)
+def _session_entry(user, permission: str = "class_checkin:view", timetable_id: int | None = None) -> Timetable:
+    """The timetable entry named by ?timetable_id= (or the JSON body), if this
+    user may run its check-in: the lecturer who teaches it always may; anyone
+    else needs `permission` (class_checkin:view/add/edit). Only on a day it meets."""
+    if timetable_id is None:
+        timetable_id = request.args.get("timetable_id", type=int)
     entry = Timetable.query.get(timetable_id) if timetable_id else None
-    if not entry or (user.role != "admin" and entry.lecturer_id != user.id):
+    if not entry or (entry.lecturer_id != user.id and not has_permission(user, permission)):
         raise ValidationError("Class session not found", status=404)
     if not teaches_on(entry, date.today(), get_no_class_dates()):
         raise ValidationError("This class is not scheduled today")
@@ -71,7 +76,7 @@ def my_classes_today():
     today = date.today()
     now = datetime.now()
     no_class_dates = get_no_class_dates()
-    if user.role == "admin":
+    if has_permission(user, "class_checkin:view"):
         entries = sorted(
             (e for e in Timetable.query.filter(Timetable.start_time.isnot(None)).all() if teaches_on(e, today, no_class_dates)),
             key=lambda e: e.start_time,
@@ -86,6 +91,7 @@ def my_classes_today():
             "scheduled_start": start_dt.isoformat() if start_dt else None,
             "scheduled_end": end_dt.isoformat() if end_dt else None,
             "ended": bool(end_dt and now > end_dt),
+            "mine": entry.lecturer_id == user.id,
         })
     upcoming = [r for r in rows if not r["ended"]]
     default_id = upcoming[0]["id"] if upcoming else (rows[-1]["id"] if rows else None)
@@ -118,6 +124,104 @@ def class_qr():
     url = f"{current_app.config['STUDENT_CHECKIN_URL']}?s={make_session_token(entry.id, date.today())}"
     png = generate_qr_png(url, "student", subtitle=f"{entry.batch or ''}  {entry.course_name}".strip())
     return Response(png, mimetype="image/png", headers={"Cache-Control": "no-store"})
+
+
+# ---------- Board code: check-in without a screen ----------
+#
+# The lecturer taps Start, writes the short code on the board, and students
+# type it instead of scanning the QR code. Lecturers can always do this for
+# their own classes; staff need class_checkin:add (start) or :edit (new code,
+# close) to do it on a lecturer's behalf.
+
+def _board_state(entry, day, include_code: bool) -> dict:
+    session = board_code.open_session(entry.id, day) or board_code.latest_session(entry.id, day)
+    return {
+        "session": session.to_dict(include_code=include_code and session.is_open()) if session else None,
+        "counts": board_code.live_counts(entry, day),
+        "code_digits": board_code.BOARD_CODE_DIGITS,
+    }
+
+
+def _body_timetable_id():
+    return (request.get_json(silent=True) or {}).get("timetable_id")
+
+
+@lecturer_bp.get("/board-session")
+@roles_required("lecturer", "admin")
+def board_session_state():
+    """Current board session for a class (code, time left) plus the live
+    check-in count. Polled every few seconds by the lecturer's phone."""
+    user = current_user()
+    entry = _session_entry(user)
+    return jsonify(_board_state(entry, date.today(), include_code=True))
+
+
+@lecturer_bp.post("/board-session")
+@roles_required("lecturer", "admin")
+def start_board_session():
+    user = current_user()
+    tid = _body_timetable_id()
+    entry = _session_entry(user, "class_checkin:add", tid if isinstance(tid, int) else -1)
+    today = date.today()
+    now = datetime.now()
+
+    if board_code.open_session(entry.id, today, now):
+        return jsonify(_board_state(entry, today, include_code=True))
+
+    start_dt, end_dt = scheduled_datetimes(entry, today)
+    if not start_dt:
+        raise ValidationError("This class has no start time in the timetable.")
+    if now < start_dt - timedelta(minutes=board_code.BOARD_OPENS_MINUTES_BEFORE):
+        raise ValidationError(
+            f"Board check-in can be started from {board_code.BOARD_OPENS_MINUTES_BEFORE} minutes before the class begins."
+        )
+    closes_at = board_code.auto_close_time(entry, today, get_all_settings())
+    if now >= closes_at:
+        raise ValidationError(
+            f"Check-in for this class closed at {closes_at.strftime('%H:%M')}. "
+            "Record late arrivals from the student list with a remark."
+        )
+
+    session = BoardSession(
+        timetable_id=entry.id, date=today, code=board_code.new_code(),
+        opened_at=now, closes_at=closes_at, started_by_id=user.id,
+    )
+    db.session.add(session)
+    db.session.commit()
+    return jsonify(_board_state(entry, today, include_code=True)), 201
+
+
+def _open_board_or_404(user):
+    tid = _body_timetable_id()
+    entry = _session_entry(user, "class_checkin:edit", tid if isinstance(tid, int) else -1)
+    session = board_code.open_session(entry.id, date.today())
+    if not session:
+        raise ValidationError("Board check-in isn't open for this class.", status=409)
+    return entry, session
+
+
+@lecturer_bp.post("/board-session/new-code")
+@roles_required("lecturer", "admin")
+def board_session_new_code():
+    """Replace a code that may have leaked. The old one stops working at once;
+    students already past the code step carry on."""
+    user = current_user()
+    entry, session = _open_board_or_404(user)
+    session.code = board_code.new_code(session.code)
+    session.code_changes += 1
+    db.session.commit()
+    return jsonify(_board_state(entry, date.today(), include_code=True))
+
+
+@lecturer_bp.post("/board-session/close")
+@roles_required("lecturer", "admin")
+def board_session_close():
+    user = current_user()
+    entry, session = _open_board_or_404(user)
+    session.closed_at = datetime.now()
+    session.closed_by_id = user.id
+    db.session.commit()
+    return jsonify(_board_state(entry, date.today(), include_code=False))
 
 
 # ---------- Student attendance for the lecturer's own courses ----------

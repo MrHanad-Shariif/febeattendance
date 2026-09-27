@@ -8,12 +8,17 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { useAuth } from "@/context/AuthContext.jsx";
 
 const EDITABLE_STATUSES = ["on_time", "late", "absent", "present"];
 const LABELS = { ...STATUS_LABELS, present: "Present (excused)" };
 
 function RosterRow({ row, onSaved, apiBase }) {
+  const { can } = useAuth();
+  // Lecturers correct their own students' records; staff need the permission.
+  const canEdit = apiBase !== "/admin" || can("student_attendance:edit");
   const [editing, setEditing] = useState(false);
   const [status, setStatus] = useState(row.status);
   const [remarks, setRemarks] = useState(row.remarks || "");
@@ -48,6 +53,11 @@ function RosterRow({ row, onSaved, apiBase }) {
       <TableCell className="font-medium">{row.student_name}</TableCell>
       <TableCell>
         {row.checkin_at ? new Date(row.checkin_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"}
+        {row.checkin_method && (
+          <Badge variant={row.checkin_method === "board" ? "info" : "muted"} className="ml-2">
+            {row.checkin_method === "board" ? "Board" : "QR"}
+          </Badge>
+        )}
       </TableCell>
       <TableCell>
         {editing ? (
@@ -100,9 +110,11 @@ function RosterRow({ row, onSaved, apiBase }) {
             </Button>
           </div>
         ) : (
-          <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>
-            Edit
-          </Button>
+          canEdit && (
+            <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>
+              Edit
+            </Button>
+          )
         )}
       </TableCell>
     </TableRow>

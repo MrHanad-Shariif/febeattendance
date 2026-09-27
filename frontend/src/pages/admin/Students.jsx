@@ -12,8 +12,12 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { initials } from "@/lib/utils";
+import { useAuth } from "@/context/AuthContext.jsx";
 
 export default function Students() {
+  const { can } = useAuth();
+  const canEdit = can("students:edit");
+  const canDelete = can("students:delete");
   const [students, setStudents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -147,24 +151,29 @@ export default function Students() {
                     <FileText /> View report
                   </Link>
                 </DropdownMenuItem>
-                {s.status === "active" ? (
-                  <DropdownMenuItem onSelect={() => handleStatusChange(s, "disabled")}>
-                    <Ban /> Disable
-                  </DropdownMenuItem>
-                ) : (
-                  <DropdownMenuItem onSelect={() => handleStatusChange(s, "active")}>
-                    <CheckCircle2 /> Enable
-                  </DropdownMenuItem>
-                )}
-                {s.face_enrolled && (
+                {canEdit &&
+                  (s.status === "active" ? (
+                    <DropdownMenuItem onSelect={() => handleStatusChange(s, "disabled")}>
+                      <Ban /> Disable
+                    </DropdownMenuItem>
+                  ) : (
+                    <DropdownMenuItem onSelect={() => handleStatusChange(s, "active")}>
+                      <CheckCircle2 /> Enable
+                    </DropdownMenuItem>
+                  ))}
+                {canEdit && s.face_enrolled && (
                   <DropdownMenuItem onSelect={() => setToResetFace(s)}>
                     <ScanFace /> Reset face
                   </DropdownMenuItem>
                 )}
-                <DropdownMenuSeparator />
-                <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => setToDelete(s)}>
-                  <Trash2 /> Delete
-                </DropdownMenuItem>
+                {canDelete && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => setToDelete(s)}>
+                      <Trash2 /> Delete
+                    </DropdownMenuItem>
+                  </>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           );

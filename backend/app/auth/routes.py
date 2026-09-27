@@ -284,7 +284,7 @@ def activate():
     invite_token.used_at = datetime.now()
     db.session.commit()
 
-    return jsonify({"message": "Account activated", "access_token": issue_token(user), "user": user.to_dict()})
+    return jsonify({"message": "Account activated", "access_token": issue_token(user), "user": {**user.to_dict(), "capabilities": capabilities(user)}})
 
 
 @auth_bp.post("/reset-password")

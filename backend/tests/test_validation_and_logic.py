@@ -79,6 +79,31 @@ def test_create_lecturer_validation(client, admin):
     assert client.post("/api/admin/lecturers", json={"name": ["x"], "email": "a@b.co"}, headers=headers).status_code == 400
 
 
+def test_update_and_delete_lecturer(client, admin, lecturer, monkeypatch):
+    headers = auth_header(admin)
+    sent = []
+    monkeypatch.setattr("app.utils.invite.send_invite_email", lambda user, token: sent.append(user.email))
+    url = f"/api/admin/lecturers/{lecturer.id}"
+
+    res = client.put(url, json={"name": "New Name", "email": "NEW@Example.com", "status": "disabled"}, headers=headers)
+    assert res.status_code == 200
+    assert res.get_json() | {"created_at": None} == {
+        "id": lecturer.id, "name": "New Name", "email": "new@example.com",
+        "role": "lecturer", "status": "disabled", "created_at": None,
+    }
+    assert sent == []  # active/disabled lecturers already have a password; no invite needed
+
+    assert client.put(url, json={"email": "admin@example.com"}, headers=headers).status_code == 409
+    assert client.put(url, json={"email": "bad"}, headers=headers).status_code == 400
+
+    invited = make_user("invited@example.com", status="invited")
+    res = client.put(f"/api/admin/lecturers/{invited.id}", json={"email": "fixed@example.com"}, headers=headers)
+    assert res.status_code == 200
+    assert sent == ["fixed@example.com"]
+
+    assert client.delete(url, headers=headers).status_code == 200
+    assert client.put(url, json={"name": "x"}, headers=headers).status_code == 404
+
 def test_coordinates_validation():
     assert parse_coords(None, None) == (None, None)
     assert parse_coords("2.03", "45.3") == (2.03, 45.3)

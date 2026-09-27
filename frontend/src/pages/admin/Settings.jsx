@@ -1,10 +1,9 @@
 import { useEffect, useState } from "react";
-import { Save, ShieldCheck, Trash2, UserPlus } from "lucide-react";
+import { Link } from "react-router-dom";
+import { Save, UserCog } from "lucide-react";
 import { toast } from "sonner";
 import client, { apiErrorMessage } from "@/api/client";
-import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Alert, PageHeader } from "@/components/page-header";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -12,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { initials } from "@/lib/utils";
+import { useAuth } from "@/context/AuthContext.jsx";
 
 const LECTURER_FIELD_LABELS = {
   site_name: "Site name",
@@ -32,6 +31,7 @@ const LECTURER_FIELD_LABELS = {
 const STUDENT_FIELD_LABELS = {
   student_late_after_minutes: "Late after (minutes)",
   student_absent_after_minutes: "Absent after (minutes)",
+  board_code_close_after_minutes: "Board check-in closes after (minutes from class start)",
   student_verification_mode: "Campus verification mode",
   student_face_verification: "Face verification",
   face_match_threshold: "Face match strictness (0-1)",
@@ -72,7 +72,7 @@ const SELECT_OPTIONS = {
   ],
 };
 
-function SettingField({ fieldKey, settings, descriptions, setSettings }) {
+function SettingField({ fieldKey, settings, descriptions, setSettings, disabled }) {
   const update = (value) => setSettings((s) => ({ ...s, [fieldKey]: value }));
   return (
     <div className="grid gap-1.5 py-4 sm:grid-cols-3 sm:gap-6">
@@ -81,7 +81,7 @@ function SettingField({ fieldKey, settings, descriptions, setSettings }) {
       </Label>
       <div className="sm:col-span-2">
         {SELECT_OPTIONS[fieldKey] ? (
-          <Select value={settings[fieldKey] || undefined} onValueChange={update}>
+          <Select value={settings[fieldKey] || undefined} onValueChange={update} disabled={disabled}>
             <SelectTrigger id={fieldKey}>
               <SelectValue placeholder="Choose a mode" />
             </SelectTrigger>
@@ -98,6 +98,7 @@ function SettingField({ fieldKey, settings, descriptions, setSettings }) {
             id={fieldKey}
             type={DATE_KEYS.has(fieldKey) ? "date" : "text"}
             value={settings[fieldKey] || ""}
+            disabled={disabled}
             onChange={(e) => update(e.target.value)}
           />
         )}
@@ -124,17 +125,13 @@ function SettingsCard({ title, description, fields, ...rest }) {
 }
 
 export default function Settings() {
+  const { can } = useAuth();
+  const canEdit = can("settings:edit");
   const [settings, setSettings] = useState({});
   const [descriptions, setDescriptions] = useState({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-
-  const [admins, setAdmins] = useState([]);
-  const [adminName, setAdminName] = useState("");
-  const [adminEmail, setAdminEmail] = useState("");
-  const [adminError, setAdminError] = useState("");
-  const [toRemove, setToRemove] = useState(null);
 
   useEffect(() => {
     client
@@ -151,7 +148,6 @@ export default function Settings() {
       })
       .catch((err) => setError(apiErrorMessage(err)))
       .finally(() => setLoading(false));
-    client.get("/admin/admins").then((res) => setAdmins(res.data)).catch(() => {});
   }, []);
 
   async function handleSave(e) {
@@ -168,31 +164,7 @@ export default function Settings() {
     }
   }
 
-  async function handleAddAdmin(e) {
-    e.preventDefault();
-    setAdminError("");
-    try {
-      await client.post("/admin/admins", { name: adminName, email: adminEmail });
-      toast.success(`Invite sent to ${adminEmail}`);
-      setAdminName("");
-      setAdminEmail("");
-      client.get("/admin/admins").then((res) => setAdmins(res.data));
-    } catch (err) {
-      setAdminError(apiErrorMessage(err));
-    }
-  }
-
-  async function handleDeleteAdmin(a) {
-    try {
-      await client.delete(`/admin/admins/${a.id}`);
-      setAdmins((prev) => prev.filter((x) => x.id !== a.id));
-      toast.success("Admin removed");
-    } catch (err) {
-      toast.error(apiErrorMessage(err));
-    }
-  }
-
-  const fieldProps = { settings, descriptions, setSettings };
+  const fieldProps = { settings, descriptions, setSettings, disabled: !canEdit };
 
   return (
     <div className="space-y-6">
@@ -245,11 +217,13 @@ export default function Settings() {
               </div>
             )}
 
-            <div className="sticky bottom-4 mt-4 flex justify-end">
-              <Button type="submit" disabled={saving} className="shadow-lg">
-                <Save /> {saving ? "Saving..." : "Save settings"}
-              </Button>
-            </div>
+            {canEdit && (
+              <div className="sticky bottom-4 mt-4 flex justify-end">
+                <Button type="submit" disabled={saving} className="shadow-lg">
+                  <Save /> {saving ? "Saving..." : "Save settings"}
+                </Button>
+              </div>
+            )}
           </form>
         )}
 
@@ -257,59 +231,28 @@ export default function Settings() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-base">
-                <ShieldCheck className="h-4 w-4 text-primary" /> Admin & staff accounts
+                <UserCog className="h-4 w-4 text-primary" /> Admin & staff accounts
               </CardTitle>
-              <CardDescription>Invite colleagues to manage the system.</CardDescription>
+              <CardDescription>
+                Staff accounts, and exactly what each one can view, add, edit or delete, are managed under Authentication.
+              </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-5">
-              <form onSubmit={handleAddAdmin} className="flex flex-wrap items-end gap-3">
-                <div className="space-y-1.5">
-                  <Label htmlFor="admin-name">Name</Label>
-                  <Input id="admin-name" required value={adminName} onChange={(e) => setAdminName(e.target.value)} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="admin-email">Email</Label>
-                  <Input id="admin-email" type="email" required value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} />
-                </div>
-                <Button type="submit">
-                  <UserPlus /> Invite admin
+            <CardContent className="flex flex-wrap gap-2">
+              {can("users:view") && (
+                <Button asChild variant="outline">
+                  <Link to="/access/users">Users</Link>
                 </Button>
-              </form>
-
-              {adminError && <Alert>{adminError}</Alert>}
-
-              <ul className="divide-y rounded-lg border">
-                {admins.map((a) => (
-                  <li key={a.id} className="flex items-center justify-between gap-3 px-4 py-3">
-                    <div className="flex min-w-0 items-center gap-3">
-                      <Avatar className="h-8 w-8">
-                        <AvatarFallback>{initials(a.name)}</AvatarFallback>
-                      </Avatar>
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium">{a.name}</p>
-                        <p className="truncate text-xs text-muted-foreground">{a.email}</p>
-                      </div>
-                    </div>
-                    <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={() => setToRemove(a)}>
-                      <Trash2 /> Remove
-                    </Button>
-                  </li>
-                ))}
-                {admins.length === 0 && <li className="px-4 py-6 text-center text-sm text-muted-foreground">No other admins.</li>}
-              </ul>
+              )}
+              {can("roles:view") && (
+                <Button asChild variant="outline">
+                  <Link to="/access/roles">Roles</Link>
+                </Button>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
       </Tabs>
 
-      <ConfirmDialog
-        open={!!toRemove}
-        onOpenChange={(o) => !o && setToRemove(null)}
-        title={`Remove ${toRemove?.name}?`}
-        description="This admin account will be deleted and can no longer sign in."
-        confirmLabel="Remove"
-        onConfirm={() => handleDeleteAdmin(toRemove)}
-      />
     </div>
   );
 }
