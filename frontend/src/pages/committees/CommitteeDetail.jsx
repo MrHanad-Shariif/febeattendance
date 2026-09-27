@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { CalendarPlus, ClipboardPlus, Crown, FileBarChart, Pencil, Trash2, UserPlus } from "lucide-react";
+import { Archive, CalendarPlus, ClipboardPlus, Crown, FileBarChart, PenLine, Pencil, ScrollText, Trash2, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import client, { apiErrorMessage } from "@/api/client";
 import { CommitteeFormDialog, staffOptions, useStaff } from "@/components/committees/CommitteeFormDialog.jsx";
@@ -19,6 +19,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatDate } from "@/lib/committees";
 import { initials } from "@/lib/utils";
+
+const ROLE_LABELS = { chairperson: "Chairperson", secretary: "Secretary", member: "Member" };
 
 function Members({ committee, onChanged }) {
   const staff = useStaff(committee.can_edit);
@@ -78,6 +80,10 @@ function Members({ committee, onChanged }) {
               <Badge variant="warning" className="gap-1">
                 <Crown className="h-3 w-3" /> Chairperson
               </Badge>
+            ) : m.role === "secretary" ? (
+              <Badge variant="info" className="gap-1">
+                <PenLine className="h-3 w-3" /> Secretary
+              </Badge>
             ) : (
               <Badge variant="muted">Member</Badge>
             )}
@@ -94,6 +100,17 @@ function Members({ committee, onChanged }) {
                     <Crown /> Make chair
                   </Button>
                 )}
+                {m.role === "member" && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() =>
+                      run(client.put(`/committees/${committee.id}`, { secretary_id: m.user_id }), `${m.name} is now secretary`)
+                    }
+                  >
+                    <PenLine /> Make secretary
+                  </Button>
+                )}
                 <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" aria-label="Remove member" onClick={() => setToRemove(m)}>
                   <Trash2 />
                 </Button>
@@ -107,7 +124,7 @@ function Members({ committee, onChanged }) {
         open={!!toRemove}
         onOpenChange={(o) => !o && setToRemove(null)}
         title={`Remove ${toRemove?.name}?`}
-        description="Their tasks stay on record. A removed chairperson loses task-management authority for this committee."
+        description="Their tasks stay on record. A removed chairperson or secretary loses task-management authority for this committee."
         confirmLabel="Remove"
         onConfirm={() => run(client.delete(`/committees/${committee.id}/members/${toRemove.user_id}`), "Member removed")}
       />
@@ -147,8 +164,9 @@ export default function CommitteeDetail() {
         }
         description={
           <>
-            Chairperson: <strong>{c.chairperson_name || "not assigned"}</strong>
-            {c.my_role && <> · Your role: {c.my_role === "chairperson" ? "Chairperson" : "Member"}</>}
+            Chairperson: <strong>{c.chairperson_name || "not assigned"}</strong> · Secretary:{" "}
+            <strong>{c.secretary_name || "not assigned"}</strong>
+            {c.my_role && <> · Your role: {ROLE_LABELS[c.my_role] || c.my_role}</>}
             {c.description && <span className="mt-1 block">{c.description}</span>}
           </>
         }
@@ -162,6 +180,13 @@ export default function CommitteeDetail() {
             {c.can_schedule_meeting && (
               <Button variant="outline" onClick={() => setMeetingOpen(true)}>
                 <CalendarPlus /> Schedule meeting
+              </Button>
+            )}
+            {c.can_view_archive && (
+              <Button variant="outline" asChild>
+                <Link to={`/archive?committee=${c.id}`}>
+                  <Archive /> Archive
+                </Link>
               </Button>
             )}
             {c.can_view_reports && (
@@ -189,14 +214,39 @@ export default function CommitteeDetail() {
       </div>
 
       <Tabs defaultValue="tasks">
-        <TabsList>
-          <TabsTrigger value="tasks">{c.can_manage_tasks || !c.my_role || c.my_role === "chairperson" ? "Tasks" : "My tasks"}</TabsTrigger>
+        <TabsList className="h-auto flex-wrap">
+          <TabsTrigger value="tasks">{c.can_manage_tasks || !c.my_role || c.my_role !== "member" ? "Tasks" : "My tasks"}</TabsTrigger>
+          <TabsTrigger value="sow">Scope of work</TabsTrigger>
           <TabsTrigger value="members">Members</TabsTrigger>
           <TabsTrigger value="meetings">Meetings</TabsTrigger>
           <TabsTrigger value="minutes">Minutes</TabsTrigger>
         </TabsList>
         <TabsContent value="tasks">
           <TaskTable tasks={tasks.data} loading={tasks.loading} showCommittee={false} exportName={`${c.name}-tasks`} />
+        </TabsContent>
+        <TabsContent value="sow">
+          <Card>
+            <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <ScrollText className="h-4 w-4 text-primary" /> Scope of work
+              </CardTitle>
+              {c.can_edit && (
+                <Button size="sm" variant="outline" onClick={() => setEditOpen(true)}>
+                  <Pencil /> Edit
+                </Button>
+              )}
+            </CardHeader>
+            <CardContent>
+              {c.scope_of_work ? (
+                <p className="whitespace-pre-wrap text-sm leading-relaxed">{c.scope_of_work}</p>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  No scope of work has been written for this committee yet.
+                  {c.can_edit ? " Use Edit to add its mandate, duties and deliverables." : ""}
+                </p>
+              )}
+            </CardContent>
+          </Card>
         </TabsContent>
         <TabsContent value="members">
           <Members committee={c} onChanged={committee.reload} />

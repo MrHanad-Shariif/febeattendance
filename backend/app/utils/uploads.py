@@ -113,3 +113,54 @@ def delete_document(relative_path: str | None):
         os.remove(os.path.join(current_app.config["UPLOAD_FOLDER"], relative_path))
     except OSError:
         pass
+
+
+def save_generated_document(data: bytes, kind: str, display_name: str, extension: str = "pdf") -> tuple[str, str]:
+    """Store a document the system produced (e.g. a generated PDF) the same
+    way as an uploaded one. Returns (display_name, stored_relative_path)."""
+    folder = os.path.join(current_app.config["UPLOAD_FOLDER"], PRIVATE_DIR, kind)
+    os.makedirs(folder, exist_ok=True)
+    stored = f"{uuid.uuid4().hex}.{extension}"
+    with open(os.path.join(folder, stored), "wb") as fh:
+        fh.write(data)
+    return _display_name(display_name), f"{PRIVATE_DIR}/{kind}/{stored}"
+
+
+# ---------- Assignment submissions (any file type) ----------
+
+MAX_SUBMISSION_BYTES = 15 * 1024 * 1024
+
+
+def save_any_file(file_storage, kind: str) -> tuple[str, str, int] | None:
+    """Store a student's submission file of any type.
+
+    The content is never interpreted: it is stored under a random name with
+    no extension and only ever served back as a download
+    (application/octet-stream, Content-Disposition: attachment) by routes that
+    check permission, so a file can't run in the browser as a page or script.
+    Returns (display_name, stored_relative_path, size_bytes)."""
+    if not file_storage or not file_storage.filename:
+        return None
+    folder = os.path.join(current_app.config["UPLOAD_FOLDER"], PRIVATE_DIR, kind)
+    os.makedirs(folder, exist_ok=True)
+    stored = uuid.uuid4().hex
+    full = os.path.join(folder, stored)
+    file_storage.save(full)
+    size = os.path.getsize(full)
+    if size == 0:
+        os.remove(full)
+        raise ValidationError(f"{_display_name(file_storage.filename)} is empty")
+    if size > MAX_SUBMISSION_BYTES:
+        os.remove(full)
+        raise ValidationError("Each file must be 15 MB or smaller")
+    return _display_name(file_storage.filename), f"{PRIVATE_DIR}/{kind}/{stored}", size
+
+
+def send_download(relative_path: str, display_name: str):
+    """Serve a stored file strictly as a download, whatever it contains."""
+    from flask import send_from_directory
+
+    return send_from_directory(
+        current_app.config["UPLOAD_FOLDER"], relative_path,
+        as_attachment=True, download_name=display_name, mimetype="application/octet-stream",
+    )

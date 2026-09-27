@@ -58,7 +58,7 @@ export default function Kiosk() {
         <Logo className="h-24 w-auto" />
       </div>
 
-      <p className="mt-6 text-xl text-brand-100">{data?.site_name || "FEBE Attendance"}</p>
+      <p className="mt-6 text-xl text-brand-100">{data?.site_name || "FEBEMS"}</p>
       <p className="mt-1 text-sm uppercase tracking-widest text-brand-300/80">Campus check-in code</p>
 
       {error ? (

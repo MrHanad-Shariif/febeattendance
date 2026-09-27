@@ -4,7 +4,7 @@ from flask import Response, jsonify, request, current_app
 
 from app.extensions import db
 from app.lecturer import lecturer_bp
-from app.models import Attendance, BoardSession, Timetable, User, StudentAttendance
+from app.models import Attendance, BoardSession, Course, Timetable, User, StudentAttendance
 from app.utils.authz import roles_required, current_user
 from app.utils import board_code
 from app.utils.rbac import has_permission
@@ -24,6 +24,24 @@ from app.utils.validation import ValidationError
 def my_today():
     user = current_user()
     return jsonify(get_today_rows(date.today(), lecturer_id=user.id))
+
+
+@lecturer_bp.get("/timetable")
+@roles_required("lecturer")
+def my_timetable():
+    """The lecturer's whole semester: weekly sessions plus the courses the
+    admin assigned to them."""
+    user = current_user()
+    entries = Timetable.query.filter_by(lecturer_id=user.id).order_by(Timetable.start_time).all()
+    courses = Course.query.filter_by(lecturer_id=user.id).order_by(Course.batch, Course.name).all()
+    settings = get_all_settings()
+    return jsonify({
+        "semester_name": settings.get("semester_name"),
+        "semester_start_date": settings.get("semester_start_date"),
+        "semester_end_date": settings.get("semester_end_date"),
+        "entries": [e.to_dict() for e in entries],
+        "courses": [c.to_dict() for c in courses],
+    })
 
 
 @lecturer_bp.get("/history")

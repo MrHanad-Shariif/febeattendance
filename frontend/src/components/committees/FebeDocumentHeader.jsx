@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import Logo from "@/components/Logo.jsx";
-import { FACULTY_NAME, formatDateTime } from "@/lib/committees";
+import { FACULTY_NAME, SYSTEM_FULL_NAME, SYSTEM_NAME, formatDateTime } from "@/lib/committees";
 
 /** Letterhead for printable minutes and reports: the existing faculty logo,
  * the faculty name, the document title and when it was generated. */
@@ -11,6 +11,9 @@ export function FebeDocumentHeader({ title, subtitle, meta = [] }) {
         <Logo className="h-16 w-auto" />
         <div className="min-w-0">
           <p className="text-base font-bold uppercase tracking-wide text-emerald-800">{FACULTY_NAME}</p>
+          <p className="text-xs text-slate-500">
+            {SYSTEM_NAME} · {SYSTEM_FULL_NAME}
+          </p>
           <h1 className="mt-1 text-xl font-bold text-slate-900">{title}</h1>
           {subtitle && <p className="text-sm text-slate-600">{subtitle}</p>}
         </div>
@@ -32,7 +35,7 @@ export function FebeDocumentHeader({ title, subtitle, meta = [] }) {
 export function FebeDocumentFooter() {
   return (
     <footer className="mt-10 border-t pt-3 text-xs text-slate-500">
-      {FACULTY_NAME} · Official record · Printed {formatDateTime(new Date().toISOString())}
+      {SYSTEM_NAME} · {FACULTY_NAME} · Official record · Printed {formatDateTime(new Date().toISOString())}
     </footer>
   );
 }

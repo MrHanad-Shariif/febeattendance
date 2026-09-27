@@ -1,14 +1,15 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { Eye, EyeOff, MapPin, QrCode, ShieldCheck } from "lucide-react";
+import { CalendarDays, ClipboardList, Eye, EyeOff, QrCode, ShieldCheck } from "lucide-react";
 import Logo from "@/components/Logo.jsx";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Input } from "@/components/ui/input";
 
 const POINTS = [
-  { icon: QrCode, text: "Check in by scanning a printed QR code" },
-  { icon: ShieldCheck, text: "Rotating campus code stops proxy check-ins" },
-  { icon: MapPin, text: "Location verified on campus" },
+  { icon: QrCode, text: "Verified attendance for lecturers and students" },
+  { icon: CalendarDays, text: "Semester timetables, courses and assignments" },
+  { icon: ClipboardList, text: "Committees, tasks, meetings and official records" },
+  { icon: ShieldCheck, text: "Rotating codes, campus location and face checks" },
 ];
 
 /** Split-screen layout shared by every signed-out page: green brand panel + form card. */
@@ -23,11 +24,14 @@ export function AuthLayout({ title, subtitle, children, footer, wide = false }) 
           <div className="rounded-xl bg-white p-2 shadow-lg">
             <Logo className="h-10 w-auto" />
           </div>
-          <span className="text-lg font-semibold">FEBE Attendance</span>
+          <div className="leading-tight">
+            <span className="block text-lg font-semibold">FEBEMS</span>
+            <span className="block text-xs text-brand-100">Faculty of Engineering and Built Environment Management System</span>
+          </div>
         </div>
 
         <div className="relative space-y-6">
-          <h2 className="max-w-md text-4xl font-bold leading-tight">Attendance, verified and effortless.</h2>
+          <h2 className="max-w-md text-4xl font-bold leading-tight">The faculty, managed in one place.</h2>
           <ul className="space-y-3">
             {POINTS.map(({ icon: Icon, text }) => (
               <li key={text} className="flex items-center gap-3 text-brand-100">
@@ -40,7 +44,7 @@ export function AuthLayout({ title, subtitle, children, footer, wide = false }) 
           </ul>
         </div>
 
-        <p className="relative text-sm text-brand-200/80">Faculty lecturer &amp; student attendance portal</p>
+        <p className="relative text-sm text-brand-200/80">FEBEMS · Faculty of Engineering and Built Environment Management System</p>
       </div>
 
       <div className="relative flex items-center justify-center px-4 py-10">

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { CheckCircle2, CircleDot, History, Pencil, PlayCircle, RotateCcw, Upload } from "lucide-react";
+import { CheckCircle2, CircleDot, FileText, History, Pencil, PlayCircle, RotateCcw, Upload } from "lucide-react";
 import { toast } from "sonner";
 import client, { apiErrorMessage } from "@/api/client";
 import { TaskFormDialog } from "@/components/committees/TaskFormDialog.jsx";
@@ -37,8 +37,15 @@ function describeEvent(e) {
   }
 }
 
+const REPORT_SECTIONS = [
+  ["completion_note", "Work carried out", "What you did to complete the task.", true],
+  ["report_outcomes", "Outcomes and results", "What was achieved or delivered.", true],
+  ["report_challenges", "Challenges encountered (optional)", "Problems met along the way and how they were handled.", false],
+  ["report_recommendations", "Recommendations and next steps (optional)", "Follow-up actions or advice for the committee.", false],
+];
+
 function CompleteDialog({ open, onOpenChange, task, onDone }) {
-  const [note, setNote] = useState("");
+  const [report, setReport] = useState({});
   const [files, setFiles] = useState([]);
   const [saving, setSaving] = useState(false);
 
@@ -46,8 +53,8 @@ function CompleteDialog({ open, onOpenChange, task, onDone }) {
     e.preventDefault();
     setSaving(true);
     try {
-      const res = await client.post(`/tasks/${task.id}/complete`, toFormData({ completion_note: note, files }));
-      toast.success("Task completed. The chairperson has been notified.");
+      const res = await client.post(`/tasks/${task.id}/complete`, toFormData({ ...report, files }));
+      toast.success("Task completed. Your task report has been generated and the chairperson and secretary notified.");
       onOpenChange(false);
       onDone(res.data);
     } catch (err) {
@@ -59,15 +66,27 @@ function CompleteDialog({ open, onOpenChange, task, onDone }) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
         <form onSubmit={submit} className="space-y-4">
           <DialogHeader>
-            <DialogTitle>Mark task completed</DialogTitle>
-            <DialogDescription>The completion date and time are recorded automatically.</DialogDescription>
+            <DialogTitle>Complete task and submit report</DialogTitle>
+            <DialogDescription>
+              Your answers are printed on the faculty's standard task report (with the task, dates and deadline filled in
+              automatically) and filed in the committee archive.
+            </DialogDescription>
           </DialogHeader>
-          <Field label="Completion note (optional)" htmlFor="done-note">
-            <Textarea id="done-note" rows={3} value={note} onChange={(e) => setNote(e.target.value)} />
-          </Field>
+          {REPORT_SECTIONS.map(([key, label, hint, required]) => (
+            <Field key={key} label={label} htmlFor={`done-${key}`} hint={hint}>
+              <Textarea
+                id={`done-${key}`}
+                rows={3}
+                required={required}
+                maxLength={5000}
+                value={report[key] || ""}
+                onChange={(e) => setReport((r) => ({ ...r, [key]: e.target.value }))}
+              />
+            </Field>
+          ))}
           <Field label="Evidence files (optional)" htmlFor="done-files" hint="PDF, Word, Excel or images, up to 15 MB in total.">
             <FileInput id="done-files" multiple onChange={setFiles} />
           </Field>
@@ -76,7 +95,7 @@ function CompleteDialog({ open, onOpenChange, task, onDone }) {
               Cancel
             </Button>
             <Button type="submit" disabled={saving}>
-              <CheckCircle2 /> {saving ? "Saving..." : "Mark completed"}
+              <CheckCircle2 /> {saving ? "Saving..." : "Complete and submit report"}
             </Button>
           </DialogFooter>
         </form>
@@ -87,7 +106,7 @@ function CompleteDialog({ open, onOpenChange, task, onDone }) {
 
 export default function TaskDetail() {
   const { id } = useParams();
-  const { data: task, setData, error, reload } = useApi(`/tasks/${id}`);
+  const { data: task, error, reload } = useApi(`/tasks/${id}`);
   const committee = useApi(task?.can_manage ? `/committees/${task.committee_id}` : null);
   const [editOpen, setEditOpen] = useState(false);
   const [completeOpen, setCompleteOpen] = useState(false);
@@ -177,14 +196,35 @@ export default function TaskDetail() {
                     <InfoRow label="Completed">
                       {formatDateTime(task.completed_at)} by {task.completed_by_name}
                     </InfoRow>
-                    <InfoRow label="Completion note">
+                    <InfoRow label="Work carried out">
                       <span className="whitespace-pre-wrap">{task.completion_note}</span>
                     </InfoRow>
+                    {task.report_outcomes && (
+                      <InfoRow label="Outcomes">
+                        <span className="whitespace-pre-wrap">{task.report_outcomes}</span>
+                      </InfoRow>
+                    )}
                   </>
                 )}
               </dl>
             </CardContent>
           </Card>
+
+          {task.report && (
+            <Card className="border-primary/40">
+              <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0">
+                <div>
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <FileText className="h-4 w-4 text-primary" /> Task report
+                  </CardTitle>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Ref. {task.report.reference_no} · filed in the committee archive
+                  </p>
+                </div>
+                <DocumentActions url={task.report.url} fileName={task.report.file_name} showName={false} />
+              </CardHeader>
+            </Card>
+          )}
 
           <Card>
             <CardHeader>
@@ -246,7 +286,7 @@ export default function TaskDetail() {
         </Card>
       </div>
 
-      <CompleteDialog open={completeOpen} onOpenChange={setCompleteOpen} task={task} onDone={(t) => setData({ ...task, ...t })} />
+      <CompleteDialog open={completeOpen} onOpenChange={setCompleteOpen} task={task} onDone={reload} />
       {task.can_manage && (
         <TaskFormDialog
           open={editOpen}

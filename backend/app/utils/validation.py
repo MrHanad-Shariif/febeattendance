@@ -139,6 +139,9 @@ def validate_settings(data: dict, current: dict) -> dict[str, str]:
         if key == "site_name":
             if not value or len(value) > 100:
                 raise ValidationError("Site name is required (max 100 characters)")
+        elif key == "semester_name":
+            if not value or len(value) > 100:
+                raise ValidationError("Semester name is required (max 100 characters)")
         elif "_minutes" in key:
             clean_int(value, key, minimum=0, maximum=1440)
         elif key in ("verification_mode", "student_verification_mode"):

@@ -172,7 +172,7 @@ def task_deadline_sweep(app):
 
         for task in open_tasks.filter(Task.deadline < now, Task.overdue_notified_at.is_(None)).all():
             notify(
-                [task.assigned_to, task.committee.chairperson], type="task", title=f"Task overdue: {task.title}",
+                [task.assigned_to, *task.committee.officers], type="task", title=f"Task overdue: {task.title}",
                 message=f"{task.committee.name}. The deadline was {task.deadline:%d %b %Y %H:%M}.",
                 link=f"/tasks/{task.id}", related_id=task.id,
                 email_subject=subject_for("task_overdue", task.title),

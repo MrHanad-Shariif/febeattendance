@@ -247,7 +247,7 @@ def test_publishing_minutes_archives_and_shares(client, people):
     post = InformationPost.query.filter_by(minutes_id=minutes["id"]).one()
     assert post.category == "meeting_minutes" and post.audience == "committee"
     assert Meeting.query.get(meeting_id).status == "held"
-    assert EmailOutbox.query.filter_by(subject="FEBE Meeting Minutes Published – Lab review").count() == 3
+    assert EmailOutbox.query.filter_by(subject="FEBEMS Meeting Minutes Published – Lab review").count() == 3
 
     # Committee-only minutes: members yes, outsiders no (list, detail and file).
     assert len(client.get("/api/minutes", headers=auth_header(people["member"])).get_json()) == 1
@@ -278,7 +278,7 @@ def test_information_sharing_permissions_and_audience(client, people):
     recipients = {e.user_id for e in EmailOutbox.query.all()}
     assert people["outsider"].id in recipients and people["student"].id not in recipients
     assert people["team"].id not in recipients  # the publisher isn't emailed their own notice
-    assert EmailOutbox.query.first().subject == "FEBE Information Sharing – Exam timetable"
+    assert EmailOutbox.query.first().subject == "FEBEMS Information Sharing – Exam timetable"
 
 
 # ---------- Notifications + outbox ----------

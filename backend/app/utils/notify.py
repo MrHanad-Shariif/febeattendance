@@ -15,6 +15,7 @@ from app.extensions import db
 from app.models import EmailOutbox, Notification, User, utcnow
 
 FACULTY_NAME = "Faculty of Engineering and Built Environment (FEBE)"
+SYSTEM_NAME = "FEBEMS"
 
 # Brief item 31: fixed subject lines.
 SUBJECTS = {
@@ -26,8 +27,11 @@ SUBJECTS = {
     "meeting_scheduled": "Meeting Scheduled – {title}",
     "meeting_updated": "Meeting Updated – {title}",
     "meeting_cancelled": "Meeting Cancelled – {title}",
-    "minutes_published": "FEBE Meeting Minutes Published – {title}",
-    "information": "FEBE Information Sharing – {title}",
+    "minutes_published": "FEBEMS Meeting Minutes Published – {title}",
+    "information": "FEBEMS Information Sharing – {title}",
+    "assignment_new": "New Assignment – {title}",
+    "assignment_extended": "Assignment Deadline Extended – {title}",
+    "assignment_comment": "Lecturer Comment on Your Assignment – {title}",
 }
 
 
@@ -36,7 +40,7 @@ def subject_for(key: str, title: str) -> str:
 
 
 def _email_html(user: User, heading: str, lines: list[str], link: str | None) -> str:
-    """Plain, FEBE-branded email body. Every value is escaped."""
+    """Plain, FEBEMS-branded email body. Every value is escaped."""
     body = "".join(f"<p style=\"margin:0 0 10px\">{escape(line)}</p>" for line in lines if line)
     button = ""
     if link:
@@ -44,7 +48,7 @@ def _email_html(user: User, heading: str, lines: list[str], link: str | None) ->
         button = (
             f'<p style="margin:18px 0"><a href="{escape(url)}" '
             'style="background:#15803d;color:#fff;padding:10px 16px;border-radius:6px;text-decoration:none">'
-            "Open in the FEBE system</a></p>"
+            "Open in FEBEMS</a></p>"
         )
     return f"""
         <div style="font-family:Arial,Helvetica,sans-serif;max-width:600px;color:#0f172a">
@@ -55,7 +59,7 @@ def _email_html(user: User, heading: str, lines: list[str], link: str | None) ->
           {body}
           {button}
           <p style="margin:24px 0 0;font-size:12px;color:#64748b">
-            This is an automatic message from the FEBE faculty system.</p>
+            This is an automatic message from FEBEMS, the Faculty of Engineering and Built Environment Management System.</p>
         </div>
     """
 
@@ -71,12 +75,14 @@ def notify(
     email_subject: str | None = None,
     email_lines: list[str] | None = None,
     exclude: User | None = None,
+    include_students: bool = False,
 ) -> int:
-    """Notify each distinct, active, non-student user. Returns how many were notified."""
+    """Notify each distinct, active user (students only when include_students
+    is set). Returns how many were notified."""
     seen: set[int] = set()
     count = 0
     for user in users:
-        if user is None or user.id in seen or user.status != "active" or user.role == "student":
+        if user is None or user.id in seen or user.status != "active" or (user.role == "student" and not include_students):
             continue
         if exclude is not None and user.id == exclude.id:
             continue

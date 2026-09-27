@@ -40,7 +40,7 @@ export default function Login() {
   return (
     <AuthLayout
       title="Welcome back"
-      subtitle="Sign in to your account"
+      subtitle="Sign in to FEBEMS"
       footer={
         <>
           <p>

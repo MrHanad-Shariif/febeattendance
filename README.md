@@ -1,6 +1,6 @@
-# FEBE Attendance
+# FEBEMS
 
-Attendance system for a university faculty. Lecturers check in and out by scanning a printed QR code, students check in to each class session, and campus presence is verified with a **rotating on-screen code** and **browser geolocation**. Administrators manage lecturers, students, the timetable and the rules, and get live dashboards and reports.
+**FEBEMS** (Faculty of Engineering and Built Environment Management System) runs the faculty's attendance, timetables, class assignments and committees. Lecturers check in and out by scanning a printed QR code, students check in to each class session, and campus presence is verified with a **rotating on-screen code** and **browser geolocation**. Administrators manage lecturers, students, the timetable and the rules, and get live dashboards and reports.
 
 It replaces the faculty's Google Sheet ("Latest Lecturer Attendance") and keeps its rules: on-time / late / absent / left-early / no-check-out.
 
@@ -37,18 +37,26 @@ It replaces the faculty's Google Sheet ("Latest Lecturer Attendance") and keeps 
 - Campus verification by rotating kiosk code and/or geolocation (mode is configurable).
 - Two ways to run student check-in for each class: show the session's own QR code and rotating 6-digit class code on a screen, or (**board code**) tap Start on a phone and write a random 4-digit code on the board, with a live check-in count, "New code" and "Close check-in". Both only work for that batch's session.
 - Review and correct their own students' attendance (a remark is mandatory and recorded).
+- **My timetable**: the whole semester in one page (weekly classes, teaching load and the courses assigned to them), headed with the semester name.
+- **Assignments**: set work for a class (course + batch) with a deadline and an optional brief. Students attach files of any type; the lecturer comments on each submission, can move the deadline for everyone or give individual students extra time. Submissions close automatically at the deadline.
 
 **Students**
 - Self-registration (full name, email, password, student ID, batch) with a live face registration and email confirmation; pre-imported roster records are *claimed* by student ID.
 - Step-by-step check-in per session: scan the lecturer's QR code → sign in → class code → location → live face scan with a head turn, matched to the registered face. Or, when the lecturer uses a board code: **Check in to current class** → board code → location → face scan. Five wrong board codes lock the student out of that class. Personal timetable and attendance report.
 - Automatic block and retake flag when absences reach the configured threshold (default 25 %).
+- Assignments: see what's due with a countdown, upload any file type (15 MB each, up to 10) until their deadline, read the lecturer's comment.
 
 **Administrators**
 - Dashboard with KPI cards, attendance trend (line), status breakdown and weekday pattern (bar), "needs attention" and live check-ins.
 - Advanced data tables everywhere: search, filters, sorting, column visibility, pagination, row selection, CSV export.
-- Manage lecturers, students, timetable and all rules; monthly reports with justified / unjustified absences; a **Check-in methods** report (QR vs board code per class session). Every report is under **Reports → All reports**.
+- Manage lecturers, students, timetable and all rules; **Timetable → Courses & lecturers** keeps the semester's course list (code, batch, credit hours) and the lecturer assigned to each, and turns a course into weekly timetable rows; monthly reports with justified / unjustified absences; a **Check-in methods** report (QR vs board code per class session). Every report is under **Reports → All reports**.
 - **User management (Authentication → Users, Roles, Permissions)**: fine-grained RBAC. Each screen allows some of View / Add / Edit / Delete (`timetable:edit`, `students:delete`, …); roles bundle these permissions and users hold roles. Built-in roles: Super Admin (locked), Viewer, Attendance Officer, Timetable Manager. Lecturers can be given roles too. People can only grant permissions they hold, only a Super Admin can make or change a Super Admin, nobody edits their own access, and there is always an active Super Admin. On upgrade, existing admins become Super Admins.
 - Printable QR codes, kiosk display link, printable student reports.
+
+**Committees**
+- Each committee has a chairperson and a **secretary with the same permissions**, and a written **scope of work (SOW)**.
+- **Committee archive** (memos, meeting agendas, reports): a committee's chairperson and secretary see only their own committees; admins, the Dean and the Administration Team see every committee. Memos can be written in FEBEMS (rendered to a PDF on the faculty letterhead with a reference number) or uploaded; agendas are filed when a meeting is scheduled.
+- Completing a task produces the **standard task report**: one PDF template (reference, committee, task, dates, deadline and timeliness, work done, outcomes, challenges, recommendations, supporting files, signature lines) filed in the archive.
 
 **Platform**
 - Green/white theme with a light/dark toggle, multi-level sidebar, fully responsive.
@@ -180,6 +188,8 @@ Configurable in **Admin → Settings** (defaults from the original spreadsheet):
 | `verification_mode` | both | `both`, `either`, `code_only`, `location_only`, `off` |
 | `student_absence_threshold_percent` | 25 | Absence share of the semester's planned sessions that blocks check-in and flags a retake |
 | `no_class_dates` | – | Holidays, e.g. `2026-10-01,2026-12-25` |
+| `semester_name` | October 2026 - February 2027 | Shown on every timetable and on new courses |
+| `campus_lat`, `campus_lng`, `campus_radius_m` | – | One campus point for **both** lecturer and student location checks |
 | `board_code_close_after_minutes` | 20 | Board-code check-in closes by itself this long after the class starts (0 = at the end of the class) |
 
 Students can check in from 30 minutes before a session starts until it ends.

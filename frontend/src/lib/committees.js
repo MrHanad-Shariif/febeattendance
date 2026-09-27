@@ -1,6 +1,8 @@
 import client from "@/api/client";
 
 export const FACULTY_NAME = "Faculty of Engineering and Built Environment (FEBE)";
+export const SYSTEM_NAME = "FEBEMS";
+export const SYSTEM_FULL_NAME = "Faculty of Engineering and Built Environment Management System";
 
 export const TASK_STATUS = {
   pending: { label: "Pending", variant: "muted" },

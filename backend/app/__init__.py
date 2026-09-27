@@ -36,6 +36,8 @@ def create_app(config_class=Config):
     from app.notifications import notifications_bp
     from app.reports import reports_bp
     from app.access import access_bp
+    from app.archive import archive_bp
+    from app.assignments import assignments_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(admin_bp)
@@ -51,10 +53,22 @@ def create_app(config_class=Config):
     app.register_blueprint(reports_bp)
     # User management: users, roles and permissions (fine-grained RBAC).
     app.register_blueprint(access_bp)
+    # Committee archive (memos, agendas, reports) and class assignments.
+    app.register_blueprint(archive_bp)
+    app.register_blueprint(assignments_bp)
 
     @app.get("/api/health")
     def health():
         return {"status": "ok"}
+
+    @app.get("/api/semester")
+    @roles_required()
+    def semester():
+        """The current semester's name and dates, for timetable headers."""
+        from app.utils.settings import get_all_settings
+
+        settings = get_all_settings()
+        return {key: settings.get(key) for key in ("semester_name", "semester_start_date", "semester_end_date")}
 
     @app.get("/api/uploads/<path:filename>")
     @roles_required()
@@ -87,6 +101,16 @@ def create_app(config_class=Config):
 # db.create_all() only creates missing tables, so these are added here.
 NEW_COLUMNS = [
     ("student_attendance", "checkin_method", "VARCHAR(20)"),
+    ("committees", "scope_of_work", "TEXT"),
+    ("tasks", "report_outcomes", "TEXT"),
+    ("tasks", "report_challenges", "TEXT"),
+    ("tasks", "report_recommendations", "TEXT"),
+]
+
+# Settings whose old default was replaced: (key, old default, new value).
+# Only rows still holding the old default are changed.
+RENAMED_DEFAULTS = [
+    ("site_name", "University attendance", "FEBEMS"),
 ]
 
 
@@ -96,6 +120,21 @@ def _add_missing_columns():
     for table, column, ddl in NEW_COLUMNS:
         if table in tables and column not in {c["name"] for c in inspector.get_columns(table)}:
             db.session.execute(db.text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
+    db.session.commit()
+
+
+def _update_renamed_defaults():
+    """Apply RENAMED_DEFAULTS and refresh every setting's help text (the
+    descriptions are not editable, so they follow the code)."""
+    from app.models import Setting
+
+    for key, old, new in RENAMED_DEFAULTS:
+        row = Setting.query.get(key)
+        if row is not None and row.value == old:
+            row.value = new
+    for row in Setting.query.all():
+        if row.key in Setting.DEFAULTS:
+            row.description = Setting.DEFAULTS[row.key][1]
     db.session.commit()
 
 
@@ -109,7 +148,10 @@ def register_cli(app):
         db.create_all()
         _add_missing_columns()
         ensure_defaults_seeded()
+        _update_renamed_defaults()
         ensure_rbac_seeded()
+        from app.utils.archive import backfill_meeting_agendas
+        backfill_meeting_agendas()
         print("Database tables created, default settings and roles seeded.")
 
     @app.cli.command("seed-admin")

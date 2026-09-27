@@ -46,6 +46,9 @@ The SPA and API share one origin in production (`/api`), so no CORS is involved;
 | `app/notices/` | Information Sharing (faculty notices) |
 | `app/notifications/` | The signed-in user's in-app notifications |
 | `app/reports/` | Committee task/activity reports (JSON + CSV) and the Dean's faculty overview |
+| `app/archive/` | Committee archive: memos (written in the system or uploaded), meeting agendas, reports |
+| `app/assignments/` | Class assignments, per-student extensions, submissions (any file type) and lecturer comments |
+| `app/utils/pdf.py` | The single FEBEMS document template (letterhead, title band, details, sections, signatures) used for memos, agendas and task reports |
 | `app/importers/` | One-off Excel/roster import commands |
 | `app/jobs.py` | Scheduled tasks (every 1–2 min) |
 
@@ -116,7 +119,10 @@ An extension of the same app: same logins, `users` rows, email and branding.
 - **Minutes ↔ Information Sharing.** Publishing minutes stores the release time, archives them in `meeting_minutes`, and creates a linked `information_posts` row (category `meeting_minutes`). That row notifies the committee, or all staff for faculty-wide minutes.
 - **Documents** (agendas, minutes, task evidence, notices) are stored under `uploads/private/…` and checked by content. They are served only by per-record routes that re-check permission. The generic `/api/uploads/…` route refuses `private/`.
 - **Printable output.** `/print/minutes/:id` and `/print/report` use the existing logo and the "Faculty of Engineering and Built Environment (FEBE)" letterhead, and are printed or saved as PDF from the browser. Reports also download as CSV.
-- New tables are created by `flask init-db` (`db.create_all`), which never drops or alters existing tables.
+- **Secretary.** `committee_members.role` is `member | chairperson | secretary`. `permissions.is_chair()` is true for both officers, so the secretary has every chairperson permission (tasks, meetings, reports, archive).
+- **Archive.** `archive_documents` rows have a `category` (`memo | agenda | report`) and a `source` (`created` = rendered by FEBEMS, `uploaded`). Completing a task files its standard report (`utils/archive.file_task_report`); scheduling or editing a meeting files its agenda (the uploaded file, or a PDF generated from the agenda text). Visibility: `permissions.archive_committee_ids()`.
+- **Assignments.** `Assignment.deadline_for(student)` is the later of the class deadline and the student's `assignment_extensions` row; every upload and file removal is refused after it. Submission files are stored without an extension and only ever served as `application/octet-stream` attachments.
+- New tables are created by `flask init-db` (`db.create_all`), which never drops tables; columns added to existing tables are listed in `NEW_COLUMNS` in `app/__init__.py` and added with `ALTER TABLE ... ADD COLUMN`.
 
 ## Frontend
 

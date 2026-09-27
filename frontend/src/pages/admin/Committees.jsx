@@ -55,6 +55,12 @@ export default function Committees() {
         meta: { label: "Chairperson" },
         cell: ({ row }) => row.original.chairperson_name || <em className="text-muted-foreground">not assigned</em>,
       },
+      {
+        accessorKey: "secretary_name",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Secretary" />,
+        meta: { label: "Secretary" },
+        cell: ({ row }) => row.original.secretary_name || <em className="text-muted-foreground">not assigned</em>,
+      },
       { accessorKey: "member_count", header: "Members", meta: { label: "Members" } },
       { accessorKey: "task_pending", header: "Open tasks", meta: { label: "Open tasks" } },
       {

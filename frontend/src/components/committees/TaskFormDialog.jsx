@@ -76,7 +76,7 @@ export function TaskFormDialog({ open, onOpenChange, committeeId, members = [], 
               placeholder="Choose a committee member"
               options={members.map((m) => ({
                 value: m.user_id,
-                label: `${m.name}${m.role === "chairperson" ? " (chairperson)" : ""}`,
+                label: `${m.name}${m.role !== "member" ? ` (${m.role})` : ""}`,
               }))}
             />
           </Field>

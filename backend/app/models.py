@@ -126,6 +126,43 @@ class Timetable(db.Model):
         }
 
 
+class Course(db.Model):
+    """A course offered this semester and the lecturer assigned to teach it.
+
+    The admin keeps this catalogue under Timetable -> Courses. Timetable rows
+    (the weekly sessions) can be created from a course, and lecturers see
+    their assigned courses on their own timetable page."""
+    __tablename__ = "courses"
+
+    id = db.Column(db.Integer, primary_key=True)
+    code = db.Column(db.String(30), nullable=True)
+    name = db.Column(db.String(255), nullable=False)
+    batch = db.Column(db.String(50), nullable=True)
+    department = db.Column(db.String(150), nullable=True)
+    credit_hours = db.Column(db.Integer, nullable=True)
+    semester = db.Column(db.String(100), nullable=True)
+    lecturer_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    note = db.Column(db.String(500), nullable=True)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+
+    lecturer = db.relationship("User")
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "code": self.code,
+            "name": self.name,
+            "batch": self.batch,
+            "department": self.department,
+            "credit_hours": self.credit_hours,
+            "semester": self.semester,
+            "lecturer_id": self.lecturer_id,
+            "lecturer_name": self.lecturer.name if self.lecturer else None,
+            "note": self.note,
+        }
+
+
 class Attendance(db.Model):
     """One row per lecturer per day. A lecturer checks in/out once a day no
     matter how many classes they teach: check-in is measured against the
@@ -293,7 +330,8 @@ class Setting(db.Model):
     description = db.Column(db.String(500), nullable=True)
 
     DEFAULTS = {
-        "site_name": ("University attendance", "Shown at the top of the check-in page."),
+        "site_name": ("FEBEMS", "System name shown on the kiosk screen and in emails (FEBEMS = Faculty of Engineering and Built Environment Management System)."),
+        "semester_name": ("October 2026 - February 2027", "Name of the current semester, shown on every timetable and on new course assignments."),
         "late_after_minutes": ("10", "A lecturer who checks in more than this many minutes after their first class's start time is marked Late."),
         "absent_after_minutes": ("50", "A lecturer who has not checked in this many minutes after their first class's start time is marked Absent. Use 0 to turn off."),
         "left_early_minutes": ("25", "A lecturer who checks out this many minutes or more before their last class's end time is marked Left early. Use 0 to turn off."),
@@ -301,9 +339,9 @@ class Setting(db.Model):
         "reminder_minutes_before": ("15", "Email a lecturer this many minutes before their first class if they have not checked in yet. Use 0 to stop reminders."),
         "verification_mode": ("both", "How campus presence is verified at check-in/out: 'both' (code and location), 'either' (code or location), 'code_only', 'location_only', or 'off'."),
         "location_rule": ("require", "off = ignore location. flag = accept but record distance. require = reject anyone outside the campus radius."),
-        "campus_lat": ("2.032389", "Campus latitude in decimal degrees."),
-        "campus_lng": ("45.307389", "Campus longitude in decimal degrees."),
-        "campus_radius_m": ("100", "Allowed distance from the campus point, in metres."),
+        "campus_lat": ("2.032389", "Campus latitude in decimal degrees. Lecturer and student check-ins are both measured from this point."),
+        "campus_lng": ("45.307389", "Campus longitude in decimal degrees. Lecturer and student check-ins are both measured from this point."),
+        "campus_radius_m": ("100", "Allowed distance from the campus point, in metres, for lecturers and students alike."),
         "no_class_dates": ("", "Comma separated dates with no classes (holidays, exams), e.g. 2026-10-01,2026-12-25."),
         "student_late_after_minutes": ("10", "A student who checks in more than this many minutes after a session's start is marked Late."),
         "student_absent_after_minutes": ("20", "A student who has not checked in this many minutes after a session's start is marked Absent."),
@@ -556,6 +594,8 @@ class Committee(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(200), nullable=False, unique=True)
     description = db.Column(db.Text, nullable=True)
+    # Scope of work (SOW): what the committee is responsible for delivering.
+    scope_of_work = db.Column(db.Text, nullable=True)
     kind = db.Column(db.String(20), nullable=False, default="committee")
     chairperson_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     status = db.Column(db.String(20), nullable=False, default="active")  # active | archived
@@ -565,15 +605,27 @@ class Committee(db.Model):
     chairperson = db.relationship("User", foreign_keys=[chairperson_id])
     memberships = db.relationship("CommitteeMember", back_populates="committee", cascade="all, delete-orphan")
 
+    @property
+    def secretary(self):
+        return next((m for m in self.memberships if m.role == "secretary"), None)
+
+    @property
+    def officers(self) -> list:
+        """Chairperson and secretary: the people who run the committee."""
+        return [m.user for m in self.memberships if m.role in CommitteeMember.OFFICER_ROLES and m.user]
+
     def to_dict(self, counts: dict | None = None):
         data = {
             "id": self.id,
             "name": self.name,
             "description": self.description,
+            "scope_of_work": self.scope_of_work,
             "kind": self.kind,
             "kind_label": self.KIND_LABELS.get(self.kind, self.kind),
             "chairperson_id": self.chairperson_id,
             "chairperson_name": self.chairperson.name if self.chairperson else None,
+            "secretary_id": self.secretary.user_id if self.secretary else None,
+            "secretary_name": self.secretary.user.name if self.secretary and self.secretary.user else None,
             "status": self.status,
             "member_count": len(self.memberships),
             "created_at": self.created_at.isoformat() if self.created_at else None,
@@ -586,7 +638,10 @@ class Committee(db.Model):
 class CommitteeMember(db.Model):
     __tablename__ = "committee_members"
 
-    ROLES = ("member", "chairperson")
+    ROLES = ("member", "chairperson", "secretary")
+    # The secretary has the same authority as the chairperson.
+    OFFICER_ROLES = ("chairperson", "secretary")
+    LABELS = {"member": "Member", "chairperson": "Chairperson", "secretary": "Secretary"}
 
     id = db.Column(db.Integer, primary_key=True)
     committee_id = db.Column(db.Integer, db.ForeignKey("committees.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -607,6 +662,7 @@ class CommitteeMember(db.Model):
             "name": self.user.name if self.user else None,
             "email": self.user.email if self.user else None,
             "role": self.role,
+            "role_label": self.LABELS.get(self.role, self.role),
             "joined_at": self.joined_at.isoformat() if self.joined_at else None,
         }
 
@@ -631,6 +687,10 @@ class Task(db.Model):
     completed_at = db.Column(db.DateTime, nullable=True)
     completed_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     completion_note = db.Column(db.Text, nullable=True)
+    # Filled in by the assignee when completing; printed on the standard task report.
+    report_outcomes = db.Column(db.Text, nullable=True)
+    report_challenges = db.Column(db.Text, nullable=True)
+    report_recommendations = db.Column(db.Text, nullable=True)
     # Set by the deadline sweep so each reminder is sent only once.
     due_soon_notified_at = db.Column(db.DateTime, nullable=True)
     overdue_notified_at = db.Column(db.DateTime, nullable=True)
@@ -676,6 +736,9 @@ class Task(db.Model):
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
             "completed_by_name": self.completed_by.name if self.completed_by else None,
             "completion_note": self.completion_note,
+            "report_outcomes": self.report_outcomes,
+            "report_challenges": self.report_challenges,
+            "report_recommendations": self.report_recommendations,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "attachment_count": len(self.attachments),
@@ -844,7 +907,7 @@ class MeetingMinutes(db.Model):
 class Notification(db.Model):
     __tablename__ = "notifications"
 
-    TYPES = ("task", "meeting", "minutes", "notice")
+    TYPES = ("task", "meeting", "minutes", "notice", "assignment")
 
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -928,3 +991,211 @@ class EmailOutbox(db.Model):
     sent_at = db.Column(db.DateTime, nullable=True)
 
     user = db.relationship("User")
+
+
+# ---------------------------------------------------------------------------
+# Committee archive: memos, meeting agendas and task reports in one place.
+# Visible to the committee's chairperson and secretary, system admins, the
+# Dean and the Administration Team (see utils/permissions.can_view_archive).
+# ---------------------------------------------------------------------------
+
+class ArchiveDocument(db.Model):
+    __tablename__ = "archive_documents"
+
+    CATEGORIES = ("memo", "agenda", "report")
+    CATEGORY_LABELS = {"memo": "Memo", "agenda": "Meeting Agenda", "report": "Report"}
+    # created = generated by the system from a form (memo, agenda, task report)
+    # uploaded = a file someone attached
+    SOURCES = ("created", "uploaded")
+
+    id = db.Column(db.Integer, primary_key=True)
+    committee_id = db.Column(db.Integer, db.ForeignKey("committees.id", ondelete="CASCADE"), nullable=False, index=True)
+    category = db.Column(db.String(20), nullable=False, index=True)
+    source = db.Column(db.String(20), nullable=False, default="uploaded")
+    reference_no = db.Column(db.String(100), nullable=True)
+    title = db.Column(db.String(255), nullable=False)
+    document_date = db.Column(db.Date, nullable=False)
+    summary = db.Column(db.Text, nullable=True)
+    # Memo fields (kept so the PDF can be regenerated and searched).
+    memo_to = db.Column(db.String(500), nullable=True)
+    memo_from = db.Column(db.String(500), nullable=True)
+    memo_cc = db.Column(db.String(500), nullable=True)
+    body = db.Column(db.Text, nullable=True)
+    file_name = db.Column(db.String(255), nullable=False)
+    file_path = db.Column(db.String(255), nullable=False)
+    task_id = db.Column(db.Integer, db.ForeignKey("tasks.id", ondelete="SET NULL"), nullable=True, index=True)
+    meeting_id = db.Column(db.Integer, db.ForeignKey("meetings.id", ondelete="SET NULL"), nullable=True, index=True)
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+
+    committee = db.relationship("Committee")
+    task = db.relationship("Task")
+    meeting = db.relationship("Meeting")
+    created_by = db.relationship("User")
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "committee_id": self.committee_id,
+            "committee_name": self.committee.name if self.committee else None,
+            "category": self.category,
+            "category_label": self.CATEGORY_LABELS.get(self.category, self.category),
+            "source": self.source,
+            "reference_no": self.reference_no,
+            "title": self.title,
+            "document_date": self.document_date.isoformat() if self.document_date else None,
+            "summary": self.summary,
+            "memo_to": self.memo_to,
+            "memo_from": self.memo_from,
+            "memo_cc": self.memo_cc,
+            "body": self.body,
+            "file_name": self.file_name,
+            "url": f"/api/archive/{self.id}/document",
+            "task_id": self.task_id,
+            "meeting_id": self.meeting_id,
+            "created_by_id": self.created_by_id,
+            "created_by_name": self.created_by.name if self.created_by else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+# ---------------------------------------------------------------------------
+# Assignments: a lecturer sets work for one of their classes (course + batch),
+# students of that batch upload files until the deadline, the lecturer
+# comments. Submissions close by themselves at the deadline; the lecturer can
+# move the deadline for everyone or give individual students extra time.
+# ---------------------------------------------------------------------------
+
+class Assignment(db.Model):
+    __tablename__ = "assignments"
+
+    id = db.Column(db.Integer, primary_key=True)
+    lecturer_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    course_name = db.Column(db.String(255), nullable=False)
+    batch = db.Column(db.String(50), nullable=False, index=True)
+    title = db.Column(db.String(255), nullable=False)
+    instructions = db.Column(db.Text, nullable=True)
+    deadline = db.Column(db.DateTime, nullable=False)
+    file_name = db.Column(db.String(255), nullable=True)  # optional brief from the lecturer
+    file_path = db.Column(db.String(255), nullable=True)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+
+    lecturer = db.relationship("User")
+    submissions = db.relationship("AssignmentSubmission", back_populates="assignment", cascade="all, delete-orphan")
+    extensions = db.relationship("AssignmentExtension", back_populates="assignment", cascade="all, delete-orphan")
+
+    def extension_for(self, student_id: int):
+        return next((e for e in self.extensions if e.student_id == student_id), None)
+
+    def deadline_for(self, student_id: int):
+        """The later of the assignment deadline and the student's own extension."""
+        ext = self.extension_for(student_id)
+        return max(self.deadline, ext.deadline) if ext else self.deadline
+
+    def is_open_for(self, student_id: int, now=None) -> bool:
+        return (now or utcnow()) < self.deadline_for(student_id)
+
+    def to_dict(self):
+        now = utcnow()
+        return {
+            "id": self.id,
+            "lecturer_id": self.lecturer_id,
+            "lecturer_name": self.lecturer.name if self.lecturer else None,
+            "course_name": self.course_name,
+            "batch": self.batch,
+            "title": self.title,
+            "instructions": self.instructions,
+            "deadline": self.deadline.isoformat() if self.deadline else None,
+            "open": now < self.deadline,
+            "file_name": self.file_name,
+            "file_url": f"/api/assignments/{self.id}/brief" if self.file_path else None,
+            "submission_count": len(self.submissions),
+            "extension_count": len(self.extensions),
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class AssignmentExtension(db.Model):
+    """Extra time for one student on one assignment."""
+    __tablename__ = "assignment_extensions"
+
+    id = db.Column(db.Integer, primary_key=True)
+    assignment_id = db.Column(db.Integer, db.ForeignKey("assignments.id", ondelete="CASCADE"), nullable=False, index=True)
+    student_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    deadline = db.Column(db.DateTime, nullable=False)
+    reason = db.Column(db.String(500), nullable=True)
+    granted_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    granted_at = db.Column(db.DateTime, default=utcnow)
+
+    assignment = db.relationship("Assignment", back_populates="extensions")
+    student = db.relationship("User", foreign_keys=[student_id])
+
+    __table_args__ = (db.UniqueConstraint("assignment_id", "student_id", name="uq_assignment_extension"),)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "student_id": self.student_id,
+            "deadline": self.deadline.isoformat() if self.deadline else None,
+            "reason": self.reason,
+            "granted_at": self.granted_at.isoformat() if self.granted_at else None,
+        }
+
+
+class AssignmentSubmission(db.Model):
+    __tablename__ = "assignment_submissions"
+
+    id = db.Column(db.Integer, primary_key=True)
+    assignment_id = db.Column(db.Integer, db.ForeignKey("assignments.id", ondelete="CASCADE"), nullable=False, index=True)
+    student_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    note = db.Column(db.Text, nullable=True)  # the student's message to the lecturer
+    submitted_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow)
+    lecturer_comment = db.Column(db.Text, nullable=True)
+    commented_at = db.Column(db.DateTime, nullable=True)
+
+    assignment = db.relationship("Assignment", back_populates="submissions")
+    student = db.relationship("User")
+    files = db.relationship("SubmissionFile", back_populates="submission", cascade="all, delete-orphan",
+                            order_by="SubmissionFile.uploaded_at")
+
+    __table_args__ = (db.UniqueConstraint("assignment_id", "student_id", name="uq_assignment_submission"),)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "assignment_id": self.assignment_id,
+            "student_id": self.student_id,
+            "student_name": self.student.name if self.student else None,
+            "student_id_number": self.student.student_id_number if self.student else None,
+            "note": self.note,
+            "submitted_at": self.submitted_at.isoformat() if self.submitted_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "lecturer_comment": self.lecturer_comment,
+            "commented_at": self.commented_at.isoformat() if self.commented_at else None,
+            "files": [f.to_dict() for f in self.files],
+        }
+
+
+class SubmissionFile(db.Model):
+    __tablename__ = "submission_files"
+
+    id = db.Column(db.Integer, primary_key=True)
+    submission_id = db.Column(db.Integer, db.ForeignKey("assignment_submissions.id", ondelete="CASCADE"), nullable=False, index=True)
+    file_name = db.Column(db.String(255), nullable=False)
+    file_path = db.Column(db.String(255), nullable=False)
+    size_bytes = db.Column(db.Integer, nullable=True)
+    uploaded_at = db.Column(db.DateTime, default=utcnow)
+
+    submission = db.relationship("AssignmentSubmission", back_populates="files")
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "file_name": self.file_name,
+            "size_bytes": self.size_bytes,
+            "url": f"/api/assignments/submissions/{self.submission_id}/files/{self.id}",
+            "uploaded_at": self.uploaded_at.isoformat() if self.uploaded_at else None,
+        }

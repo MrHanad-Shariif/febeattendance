@@ -8,7 +8,7 @@ from sqlalchemy.orm import joinedload
 
 from app.admin import admin_bp
 from app.extensions import db
-from app.models import BoardSession, User, Timetable, Attendance, Setting, StudentAttendance
+from app.models import BoardSession, Course, User, Timetable, Attendance, Setting, StudentAttendance
 from app.utils.authz import current_user, permission_required
 from app.utils.student_override import apply_override
 from app.utils.invite import create_invited_user, resend_invite
@@ -182,6 +182,69 @@ def delete_timetable_entry(entry_id):
     db.session.delete(entry)
     db.session.commit()
     return jsonify({"message": "Deleted"})
+
+
+# ---------- Course catalogue (courses offered and who teaches them) ----------
+
+def _course_fields(data: dict) -> dict:
+    lecturer_id = clean_int(data.get("lecturer_id"), "Lecturer", minimum=1)
+    lecturer = User.query.filter_by(id=lecturer_id, role="lecturer").first() if lecturer_id else None
+    if lecturer_id and not lecturer:
+        raise ValidationError("Unknown lecturer")
+    return {
+        "code": clean_text(data.get("code"), "Course code", max_len=30),
+        "name": clean_text(data.get("name"), "Course name", max_len=255, required=True),
+        "batch": clean_text(data.get("batch"), "Batch", max_len=50),
+        "department": clean_text(data.get("department"), "Department", max_len=150),
+        "credit_hours": clean_int(data.get("credit_hours"), "Credit hours", minimum=0, maximum=30),
+        "semester": clean_text(data.get("semester"), "Semester", max_len=100) or get_all_settings().get("semester_name"),
+        "lecturer_id": lecturer.id if lecturer else None,
+        "note": clean_text(data.get("note"), "Note", max_len=500),
+    }
+
+
+@admin_bp.get("/course-catalogue")
+@permission_required("timetable:view")
+def list_course_catalogue():
+    courses = Course.query.order_by(Course.batch, Course.name).all()
+    sessions = {}
+    for entry in Timetable.query.all():
+        sessions.setdefault((entry.course_name, entry.batch, entry.lecturer_id), 0)
+        sessions[(entry.course_name, entry.batch, entry.lecturer_id)] += 1
+    out = []
+    for c in courses:
+        data = c.to_dict()
+        data["timetable_sessions"] = sessions.get((c.name, c.batch, c.lecturer_id), 0)
+        out.append(data)
+    return jsonify(out)
+
+
+@admin_bp.post("/course-catalogue")
+@permission_required("timetable:add")
+def create_course():
+    course = Course(**_course_fields(request.get_json(silent=True) or {}))
+    db.session.add(course)
+    db.session.commit()
+    return jsonify(course.to_dict()), 201
+
+
+@admin_bp.put("/course-catalogue/<int:course_id>")
+@permission_required("timetable:edit")
+def update_course(course_id):
+    course = Course.query.get_or_404(course_id)
+    for key, value in _course_fields(request.get_json(silent=True) or {}).items():
+        setattr(course, key, value)
+    db.session.commit()
+    return jsonify(course.to_dict())
+
+
+@admin_bp.delete("/course-catalogue/<int:course_id>")
+@permission_required("timetable:delete")
+def delete_course(course_id):
+    course = Course.query.get_or_404(course_id)
+    db.session.delete(course)
+    db.session.commit()
+    return jsonify({"message": "Course deleted"})
 
 
 # ---------- Settings ----------

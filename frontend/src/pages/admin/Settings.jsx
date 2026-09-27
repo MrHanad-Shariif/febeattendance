@@ -13,8 +13,23 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/context/AuthContext.jsx";
 
+const GENERAL_FIELD_LABELS = {
+  site_name: "System name",
+  semester_name: "Current semester",
+  semester_start_date: "Semester start date",
+  semester_end_date: "Semester end date",
+  no_class_dates: "No-class dates (comma separated, yyyy-mm-dd)",
+};
+
+// One campus point and radius for everyone: lecturer and student check-ins
+// are both measured against these same coordinates.
+const LOCATION_FIELD_LABELS = {
+  campus_lat: "Campus latitude",
+  campus_lng: "Campus longitude",
+  campus_radius_m: "Campus radius (metres)",
+};
+
 const LECTURER_FIELD_LABELS = {
-  site_name: "Site name",
   late_after_minutes: "Late after (minutes)",
   absent_after_minutes: "Absent after (minutes)",
   left_early_minutes: "Left early threshold (minutes)",
@@ -22,10 +37,6 @@ const LECTURER_FIELD_LABELS = {
   reminder_minutes_before: "Reminder before class (minutes)",
   verification_mode: "Campus verification mode",
   location_rule: "Location rule (legacy)",
-  campus_lat: "Campus latitude",
-  campus_lng: "Campus longitude",
-  campus_radius_m: "Campus radius (metres)",
-  no_class_dates: "No-class dates (comma separated, yyyy-mm-dd)",
 };
 
 const STUDENT_FIELD_LABELS = {
@@ -38,15 +49,21 @@ const STUDENT_FIELD_LABELS = {
   face_max_attempts_per_session: "Face scan attempts per class",
   student_lates_equal_absent: "Lates that equal 1 absence",
   student_absence_threshold_percent: "Absence % that blocks check-in / flags retake",
-  semester_start_date: "Semester start date (fallback estimate)",
-  semester_end_date: "Semester end date (fallback estimate)",
 };
 
 const COMMITTEE_FIELD_LABELS = {
   dean_task_override: "Dean may manage any committee",
 };
 
-const FIELD_LABELS = { ...LECTURER_FIELD_LABELS, ...STUDENT_FIELD_LABELS, ...COMMITTEE_FIELD_LABELS };
+const FIELD_LABELS = {
+  ...GENERAL_FIELD_LABELS,
+  ...LOCATION_FIELD_LABELS,
+  ...LECTURER_FIELD_LABELS,
+  ...STUDENT_FIELD_LABELS,
+  ...COMMITTEE_FIELD_LABELS,
+};
+const GENERAL_FIELD_ORDER = Object.keys(GENERAL_FIELD_LABELS);
+const LOCATION_FIELD_ORDER = Object.keys(LOCATION_FIELD_LABELS);
 const LECTURER_FIELD_ORDER = Object.keys(LECTURER_FIELD_LABELS);
 const STUDENT_FIELD_ORDER = Object.keys(STUDENT_FIELD_LABELS);
 const COMMITTEE_FIELD_ORDER = Object.keys(COMMITTEE_FIELD_LABELS);
@@ -168,10 +185,12 @@ export default function Settings() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Settings" description="These mirror the rules from the original attendance spreadsheet." />
+      <PageHeader title="Settings" description="System, semester, campus location and the attendance rules." />
 
-      <Tabs defaultValue="lecturer">
-        <TabsList>
+      <Tabs defaultValue="general">
+        <TabsList className="h-auto flex-wrap">
+          <TabsTrigger value="general">General & semester</TabsTrigger>
+          <TabsTrigger value="location">Campus location</TabsTrigger>
           <TabsTrigger value="lecturer">Lecturer rules</TabsTrigger>
           <TabsTrigger value="student">Student rules</TabsTrigger>
           <TabsTrigger value="committees">Committees</TabsTrigger>
@@ -186,10 +205,26 @@ export default function Settings() {
           </div>
         ) : (
           <form onSubmit={handleSave}>
+            <TabsContent value="general">
+              <SettingsCard
+                title="System and semester"
+                description="The system name, the current semester and the days without classes."
+                fields={GENERAL_FIELD_ORDER}
+                {...fieldProps}
+              />
+            </TabsContent>
+            <TabsContent value="location">
+              <SettingsCard
+                title="Campus location (lecturers and students)"
+                description="Lecturers and students are checked against this same point and radius, so both groups are on campus by the same definition."
+                fields={LOCATION_FIELD_ORDER}
+                {...fieldProps}
+              />
+            </TabsContent>
             <TabsContent value="lecturer">
               <SettingsCard
                 title="Lecturer attendance rules"
-                description="Thresholds and campus verification for lecturer check-ins."
+                description="Thresholds and campus verification for lecturer check-ins. The campus point is under Campus location."
                 fields={LECTURER_FIELD_ORDER}
                 {...fieldProps}
               />
@@ -197,7 +232,7 @@ export default function Settings() {
             <TabsContent value="student">
               <SettingsCard
                 title="Student attendance rules"
-                description="Thresholds, retake rule and semester dates for student check-ins."
+                description="Thresholds and the retake rule for student check-ins. Students use the same campus point as lecturers (Campus location)."
                 fields={STUDENT_FIELD_ORDER}
                 {...fieldProps}
               />

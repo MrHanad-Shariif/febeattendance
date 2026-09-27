@@ -11,6 +11,7 @@ from flask import jsonify, request
 from app.extensions import db
 from app.meetings import meetings_bp
 from app.models import Committee, InformationPost, Meeting, MeetingMinutes, utcnow
+from app.utils.archive import file_meeting_agenda
 from app.utils.audiences import audience_users, committee_users
 from app.utils.authz import current_user, roles_required
 from app.utils.notify import notify, subject_for
@@ -137,11 +138,12 @@ def get_meeting(meeting_id):
 def schedule_meeting(committee_id):
     user = current_user()
     committee = Committee.query.get_or_404(committee_id)
-    require(can_schedule_meeting(user, committee), "Only this committee's chairperson can schedule its meetings.")
+    require(can_schedule_meeting(user, committee), "Only this committee's chairperson or secretary can schedule its meetings.")
     meeting = Meeting(committee=committee, created_by_id=user.id, status="scheduled")
     _apply_meeting_fields(meeting, _payload(), creating=True)
     db.session.add(meeting)
     db.session.flush()
+    file_meeting_agenda(meeting, user)
     _notify_members(meeting, user, "meeting_scheduled", "Meeting scheduled")
     db.session.commit()
     return jsonify(_meeting_dict(meeting, user)), 201
@@ -157,6 +159,7 @@ def update_meeting(meeting_id):
     _apply_meeting_fields(meeting, data, creating=False)
     if "status" in data:
         meeting.status = clean_choice(data.get("status"), "Status", Meeting.STATUSES)
+    file_meeting_agenda(meeting, user)
     notify_members = str(data.get("notify", "true")).lower() != "false"
     if notify_members:
         key, heading = (

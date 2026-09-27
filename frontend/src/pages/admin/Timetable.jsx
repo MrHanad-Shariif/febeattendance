@@ -12,7 +12,10 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { SemesterBadge, useSemester } from "@/components/timetable/WeeklyTimetable.jsx";
 import { cn } from "@/lib/utils";
+import CourseCatalogue from "./CourseCatalogue.jsx";
 import { useAuth } from "@/context/AuthContext.jsx";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -54,6 +57,8 @@ export default function Timetable() {
   const [formError, setFormError] = useState("");
   const [loading, setLoading] = useState(true);
   const [toDelete, setToDelete] = useState(null);
+  const [tab, setTab] = useState("sessions");
+  const semester = useSemester();
 
   function load() {
     setLoading(true);
@@ -77,6 +82,19 @@ export default function Timetable() {
   function openAdd() {
     setForm(emptyForm);
     setFormError("");
+    setFormOpen(true);
+  }
+
+  // Start a weekly-timetable row from a course in the course list.
+  function openAddFromCourse(course) {
+    setForm({
+      ...emptyForm,
+      lecturer_id: course.lecturer_id ? String(course.lecturer_id) : "",
+      course_name: course.name,
+      batch: course.batch || "",
+    });
+    setFormError("");
+    setTab("sessions");
     setFormOpen(true);
   }
 
@@ -230,31 +248,45 @@ export default function Timetable() {
     <div className="space-y-6">
       <PageHeader
         title="Timetable"
-        description="Every recurring class, by lecturer, batch and weekday."
+        description="The semester's courses, who teaches them, and every recurring class by lecturer, batch and weekday."
         actions={
-          can("timetable:add") && (
-            <Button onClick={openAdd}>
-              <Plus /> Add class
-            </Button>
-          )
+          <>
+            <SemesterBadge name={semester?.semester_name} />
+            {can("timetable:add") && tab === "sessions" && (
+              <Button onClick={openAdd}>
+                <Plus /> Add class
+              </Button>
+            )}
+          </>
         }
       />
 
       {error && <Alert>{error}</Alert>}
 
-      <DataTable
-        columns={columns}
-        data={entries}
-        loading={loading}
-        getRowId={(r) => String(r.id)}
-        searchPlaceholder="Search lecturer, course, room..."
-        filters={[
-          { columnId: "lecturer_name", label: "Lecturer" },
-          { columnId: "batch", label: "Batch" },
-        ]}
-        exportName="timetable"
-        emptyText="No classes in the timetable yet."
-      />
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList>
+          <TabsTrigger value="sessions">Weekly timetable</TabsTrigger>
+          <TabsTrigger value="courses">Courses & lecturers</TabsTrigger>
+        </TabsList>
+        <TabsContent value="courses">
+          <CourseCatalogue lecturers={lecturers} semesterName={semester?.semester_name} onAddSessions={openAddFromCourse} />
+        </TabsContent>
+        <TabsContent value="sessions">
+          <DataTable
+            columns={columns}
+            data={entries}
+            loading={loading}
+            getRowId={(r) => String(r.id)}
+            searchPlaceholder="Search lecturer, course, room..."
+            filters={[
+              { columnId: "lecturer_name", label: "Lecturer" },
+              { columnId: "batch", label: "Batch" },
+            ]}
+            exportName="timetable"
+            emptyText="No classes in the timetable yet."
+          />
+        </TabsContent>
+      </Tabs>
 
       <Dialog open={formOpen} onOpenChange={setFormOpen}>
         <DialogContent className="max-w-2xl">

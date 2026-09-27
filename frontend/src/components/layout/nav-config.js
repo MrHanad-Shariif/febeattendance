@@ -1,5 +1,7 @@
 import {
+  Archive,
   Bell,
+  NotebookPen,
   BookOpen,
   Building2,
   ClipboardList,
@@ -47,6 +49,8 @@ export const NAV_BY_ROLE = {
       label: "Classes",
       icon: BookOpen,
       children: [
+        { label: "My timetable", icon: CalendarDays, to: "/my-timetable" },
+        { label: "Assignments", icon: NotebookPen, to: "/assignments" },
         { label: "My students", icon: GraduationCap, to: "/my-students" },
         { label: "Class check-in (QR & board)", icon: KeyRound, to: "/class-code" },
       ],
@@ -55,6 +59,7 @@ export const NAV_BY_ROLE = {
   student: [
     { label: "Today", icon: ScanLine, to: "/", end: true },
     { label: "Timetable", icon: CalendarDays, to: "/student-timetable" },
+    { label: "Assignments", icon: NotebookPen, to: "/assignments" },
     { label: "My report", icon: FileBarChart, to: "/student-report" },
   ],
 };
@@ -144,6 +149,9 @@ export function buildNav(user) {
   ];
   if (chairs) {
     committees.push({ label: "Task monitoring", icon: ListChecks, to: "/tasks/monitor" });
+  }
+  if (caps.can_view_archive) {
+    committees.push({ label: "Committee archive", icon: Archive, to: "/archive" });
   }
 
   const groups = [{ label: "Committees", icon: Network, children: committees }];

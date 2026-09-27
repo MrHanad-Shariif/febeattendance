@@ -16,6 +16,15 @@ import Dashboard from "./pages/lecturer/Dashboard.jsx";
 import History from "./pages/lecturer/History.jsx";
 import ClassCode from "./pages/lecturer/ClassCode.jsx";
 import LecturerStudentAttendance from "./pages/lecturer/StudentAttendance.jsx";
+import LecturerTimetable from "./pages/lecturer/Timetable.jsx";
+
+// Class assignments (lecturers set them, students submit)
+import LecturerAssignments from "./pages/assignments/LecturerAssignments.jsx";
+import LecturerAssignmentDetail from "./pages/assignments/LecturerAssignmentDetail.jsx";
+import { StudentAssignmentDetail, StudentAssignmentList } from "./pages/assignments/StudentAssignments.jsx";
+
+// Committee archive: memos, meeting agendas and reports
+import Archive from "./pages/archive/Archive.jsx";
 
 import StudentDashboard from "./pages/student/Dashboard.jsx";
 import StudentCheckIn from "./pages/student/CheckIn.jsx";
@@ -79,6 +88,12 @@ function Home() {
   );
 }
 
+// Same URL, a different page for lecturers and students.
+function ByRole({ lecturer, student }) {
+  const { user } = useAuth();
+  return user?.role === "student" ? student : lecturer;
+}
+
 function guard(roles, element) {
   return <ProtectedRoute roles={roles}>{element}</ProtectedRoute>;
 }
@@ -129,6 +144,15 @@ export default function App() {
         <Route path="/checkin" element={<QrLanding role="lecturer"><Dashboard /></QrLanding>} />
         <Route path="/history" element={guard(["lecturer"], <History />)} />
         <Route path="/my-students" element={guard(["lecturer"], <LecturerStudentAttendance />)} />
+        <Route path="/my-timetable" element={guard(["lecturer"], <LecturerTimetable />)} />
+        <Route
+          path="/assignments"
+          element={guard(["lecturer", "student"], <ByRole lecturer={<LecturerAssignments />} student={<StudentAssignmentList />} />)}
+        />
+        <Route
+          path="/assignments/:id"
+          element={guard(["lecturer", "student"], <ByRole lecturer={<LecturerAssignmentDetail />} student={<StudentAssignmentDetail />} />)}
+        />
 
         {/* Student */}
         <Route path="/student-checkin" element={<QrLanding role="student"><StudentCheckIn /></QrLanding>} />
@@ -166,6 +190,7 @@ export default function App() {
         <Route path="/tasks/:id" element={guard(STAFF, <TaskDetail />)} />
         <Route path="/meetings" element={guard(STAFF, <Meetings />)} />
         <Route path="/meetings/:id" element={guard(STAFF, <MeetingDetail />)} />
+        <Route path="/archive" element={guard(STAFF, <Archive />)} />
         <Route path="/meeting-minutes" element={guard(STAFF, <MinutesArchive />)} />
         <Route path="/meeting-minutes/publish" element={guard(STAFF, <PublishMinutes />)} />
         <Route path="/meeting-minutes/:id" element={guard(STAFF, <MinutesDetail />)} />

@@ -115,13 +115,15 @@ export function SidebarContent({ items, collapsed = false, onNavigate, onExpandR
     <div className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
       <div className={cn("flex h-16 shrink-0 items-center gap-3 border-b border-sidebar-border px-4", collapsed && "justify-center px-2")}>
         {collapsed ? (
-          <img src="/assets/logo.png" alt="FEBE" className="h-9 w-9 shrink-0 rounded-md object-cover object-left" />
+          <img src="/assets/logo.png" alt="FEBEMS" className="h-9 w-9 shrink-0 rounded-md object-cover object-left" />
         ) : (
           <>
             <Logo className="h-10 w-auto max-w-[120px] shrink-0" />
             <div className="min-w-0 leading-tight">
-              <p className="truncate text-sm font-bold text-foreground">Attendance</p>
-              <p className="truncate text-[11px] text-muted-foreground">Faculty portal</p>
+              <p className="truncate text-sm font-bold text-foreground">FEBEMS</p>
+              <p className="truncate text-[11px] text-muted-foreground" title="Faculty of Engineering and Built Environment Management System">
+                Faculty management system
+              </p>
             </div>
           </>
         )}

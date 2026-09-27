@@ -13,10 +13,10 @@ from datetime import datetime
 
 from flask import Response, jsonify, request
 
-from app.models import Committee, CommitteeMember, Meeting, MeetingMinutes, Task, User, utcnow
+from app.models import Committee, Meeting, MeetingMinutes, Task, User, utcnow
 from app.reports import reports_bp
 from app.utils.authz import current_user, roles_required
-from app.utils.permissions import can_view_all_committees, require
+from app.utils.permissions import can_view_all_committees, officer_committee_ids, require
 from app.utils.validation import ValidationError, clean_int, parse_iso_date
 
 STAFF_ROLES = ("admin", "lecturer")
@@ -46,6 +46,7 @@ ACTIVITY_COLUMNS = [
     ("name", "Committee / unit"),
     ("kind_label", "Type"),
     ("chairperson_name", "Chairperson"),
+    ("secretary_name", "Secretary"),
     ("member_count", "Members"),
     ("task_total", "Tasks"),
     ("task_completed", "Completed"),
@@ -61,7 +62,7 @@ def _allowed_committees(user: User) -> list[Committee] | None:
     """None = every committee."""
     if can_view_all_committees(user):
         return None
-    ids = [m.committee_id for m in CommitteeMember.query.filter_by(user_id=user.id, role="chairperson")]
+    ids = officer_committee_ids(user)
     return Committee.query.filter(Committee.id.in_(ids or [-1])).all()
 
 
@@ -88,6 +89,7 @@ def _activity_row(c: Committee, now) -> dict:
         "name": c.name,
         "kind_label": Committee.KIND_LABELS.get(c.kind, c.kind),
         "chairperson_name": c.chairperson.name if c.chairperson else "—",
+        "secretary_name": c.secretary.user.name if c.secretary and c.secretary.user else "—",
         "member_count": len(c.memberships),
         "task_total": total,
         "task_completed": completed,
@@ -119,10 +121,10 @@ def _build_report(user: User, report_type: str) -> dict:
     def check_committee_scope():
         if committee is not None:
             require(allowed_ids is None or committee.id in allowed_ids,
-                    "You can only run reports for committees you chair.")
+                    "You can only run reports for committees you chair or are secretary of.")
 
     query = Task.query
-    scope = "All committees" if allowed_ids is None else "Committees you chair"
+    scope = "All committees" if allowed_ids is None else "Committees you chair or are secretary of"
     summary = []
 
     if report_type == "faculty_overview":
@@ -211,7 +213,7 @@ def get_report(report_type):
         return jsonify(report)
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["Faculty of Engineering and Built Environment (FEBE)"])
+    writer.writerow(["FEBEMS - Faculty of Engineering and Built Environment Management System"])
     writer.writerow([report["title"], report["scope"], f"Generated {report['generated_at'][:16].replace('T', ' ')}"])
     writer.writerow([])
     writer.writerow([c["label"] for c in report["columns"]])

@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
-import { AlertTriangle, CalendarDays, CheckCircle2, ClipboardList, Crown, Network, Users } from "lucide-react";
+import { AlertTriangle, CalendarDays, CheckCircle2, ClipboardList, Crown, Network, PenLine, Users } from "lucide-react";
 import { useAuth } from "@/context/AuthContext.jsx";
 import { useApi } from "@/components/committees/shared";
 import { Alert, PageHeader } from "@/components/page-header";
@@ -47,6 +47,7 @@ export function CommitteeCards({ committees }) {
                   <p className="truncate font-semibold">{c.name}</p>
                   <p className="text-xs text-muted-foreground">
                     Chair: {c.chairperson_name || <em>not assigned</em>}
+                    {c.secretary_name && <> · Secretary: {c.secretary_name}</>}
                   </p>
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-1">
@@ -54,6 +55,11 @@ export function CommitteeCards({ committees }) {
                   {c.my_role === "chairperson" && (
                     <Badge variant="warning" className="gap-1">
                       <Crown className="h-3 w-3" /> Chairperson
+                    </Badge>
+                  )}
+                  {c.my_role === "secretary" && (
+                    <Badge variant="info" className="gap-1">
+                      <PenLine className="h-3 w-3" /> Secretary
                     </Badge>
                   )}
                   {c.my_role === "member" && <Badge variant="muted">Member</Badge>}

@@ -40,8 +40,10 @@ export function CommitteeFormDialog({ open, onOpenChange, committee, onSaved }) 
     setForm({
       name: committee?.name || "",
       description: committee?.description || "",
+      scope_of_work: committee?.scope_of_work || "",
       kind: committee?.kind || "committee",
       chairperson_id: committee?.chairperson_id ? String(committee.chairperson_id) : "",
+      secretary_id: committee?.secretary_id ? String(committee.secretary_id) : "",
       status: committee?.status || "active",
     });
   }, [open, committee]);
@@ -67,8 +69,10 @@ export function CommitteeFormDialog({ open, onOpenChange, committee, onSaved }) 
     const body = {
       name: form.name,
       description: form.description,
+      scope_of_work: form.scope_of_work,
       kind: form.kind,
       chairperson_id: form.chairperson_id ? Number(form.chairperson_id) : null,
+      secretary_id: form.secretary_id ? Number(form.secretary_id) : null,
     };
     try {
       let res;
@@ -103,13 +107,26 @@ export function CommitteeFormDialog({ open, onOpenChange, committee, onSaved }) 
             <Input id="c-name" required maxLength={200} value={form.name || ""} onChange={(e) => set("name")(e.target.value)} />
           </Field>
           <Field label="Description" htmlFor="c-desc">
-            <Textarea id="c-desc" rows={3} value={form.description || ""} onChange={(e) => set("description")(e.target.value)} />
+            <Textarea id="c-desc" rows={2} value={form.description || ""} onChange={(e) => set("description")(e.target.value)} />
+          </Field>
+          <Field
+            label="Scope of work (SOW)"
+            htmlFor="c-sow"
+            hint="What this committee is responsible for: its mandate, main duties and expected deliverables. One item per line reads best."
+          >
+            <Textarea
+              id="c-sow"
+              rows={5}
+              maxLength={20000}
+              value={form.scope_of_work || ""}
+              onChange={(e) => set("scope_of_work")(e.target.value)}
+            />
           </Field>
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Type" htmlFor="c-kind" hint="Administration Team = the Dean's administrative unit.">
               <OptionSelect id="c-kind" value={form.kind} onChange={set("kind")} options={KIND_OPTIONS} />
             </Field>
-            <Field label="Chairperson" htmlFor="c-chair" hint="Only the chairperson can assign this committee's tasks.">
+            <Field label="Chairperson" htmlFor="c-chair" hint="The chairperson and secretary run the committee's tasks and meetings.">
               <OptionSelect
                 id="c-chair"
                 value={form.chairperson_id}
@@ -117,6 +134,16 @@ export function CommitteeFormDialog({ open, onOpenChange, committee, onSaved }) 
                 options={staffOptions(staff)}
                 placeholder="Choose a chairperson"
                 anyLabel="No chairperson yet"
+              />
+            </Field>
+            <Field label="Secretary" htmlFor="c-secretary" hint="Has the same permissions as the chairperson.">
+              <OptionSelect
+                id="c-secretary"
+                value={form.secretary_id}
+                onChange={set("secretary_id")}
+                options={staffOptions(staff.filter((u) => String(u.id) !== String(form.chairperson_id)))}
+                placeholder="Choose a secretary"
+                anyLabel="No secretary yet"
               />
             </Field>
           </div>
