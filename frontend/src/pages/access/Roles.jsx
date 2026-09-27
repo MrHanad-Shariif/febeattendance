@@ -1,20 +1,27 @@
 import { useEffect, useMemo, useState } from "react";
-import { Copy, Lock, Pencil, Plus, ShieldCheck, Trash2, Users } from "lucide-react";
+import { Copy, Eye, Lock, MoreHorizontal, Pencil, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import client, { apiErrorMessage } from "@/api/client";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { DataTable, DataTableColumnHeader, exactFilter } from "@/components/data-table";
 import { Alert, PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/context/AuthContext.jsx";
 import { cn } from "@/lib/utils";
+
+export const ACTION_TONE = { view: "secondary", add: "success", edit: "default", delete: "danger" };
+
+const TYPE_OPTIONS = [
+  { value: "system", label: "System" },
+  { value: "custom", label: "Custom" },
+];
 
 export const ACTIONS = [
   { key: "view", label: "View" },
@@ -170,6 +177,119 @@ export default function Roles() {
     return map;
   }, [catalogue]);
 
+  const canEdit = can("roles:edit");
+  const canAdd = can("roles:add");
+  const canDelete = can("roles:delete");
+
+  const columns = useMemo(
+    () => [
+      {
+        accessorKey: "name",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Role" />,
+        meta: { label: "Role" },
+        cell: ({ row }) => (
+          <div className="flex min-w-[200px] items-start gap-2.5">
+            {row.original.is_system ? (
+              <Lock className="mt-0.5 h-4 w-4 shrink-0 text-purple-500" />
+            ) : (
+              <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+            )}
+            <div className="min-w-0">
+              <p className="font-medium">{row.original.name}</p>
+              {row.original.description && <p className="line-clamp-2 text-xs text-muted-foreground">{row.original.description}</p>}
+            </div>
+          </div>
+        ),
+      },
+      {
+        id: "type",
+        accessorFn: (r) => (r.is_system ? "system" : "custom"),
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Type" />,
+        meta: { label: "Type", exportValue: (r) => (r.is_system ? "System" : "Custom") },
+        filterFn: exactFilter,
+        cell: ({ row }) => <Badge variant={row.original.is_system ? "purple" : "muted"}>{row.original.is_system ? "System" : "Custom"}</Badge>,
+      },
+      {
+        id: "access",
+        header: "Access by action",
+        enableSorting: false,
+        meta: { label: "Access by action", exportValue: (r) => ACTIONS.map((a) => `${a.label} ${r.permissions.filter((c) => c.endsWith(`:${a.key}`)).length}`).join(", ") },
+        cell: ({ row }) => (
+          <div className="flex flex-wrap gap-1">
+            {ACTIONS.map((a) => {
+              const n = row.original.permissions.filter((c) => c.endsWith(`:${a.key}`)).length;
+              return (
+                <Badge key={a.key} variant={n ? ACTION_TONE[a.key] : "outline"} className={n ? "" : "opacity-40"}>
+                  {a.label} {n}
+                </Badge>
+              );
+            })}
+          </div>
+        ),
+      },
+      {
+        id: "permissions",
+        accessorFn: (r) => r.permissions.length,
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Permissions" />,
+        meta: { label: "Permissions", className: "text-right tabular-nums", exportValue: (r) => r.permissions.map((c) => labels[c] || c).join("; ") },
+      },
+      {
+        accessorKey: "user_count",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Users" />,
+        meta: { label: "Users", className: "text-right tabular-nums" },
+      },
+      {
+        accessorKey: "created_at",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Created" />,
+        meta: { label: "Created" },
+        cell: ({ row }) => (row.original.created_at ? new Date(row.original.created_at).toLocaleDateString() : "—"),
+      },
+      {
+        id: "actions",
+        enableHiding: false,
+        enableSorting: false,
+        header: "",
+        meta: { noExport: true, className: "w-12 text-right" },
+        cell: ({ row }) => {
+          const role = row.original;
+          const editable = !role.is_system && canEdit;
+          return (
+            <div onClick={(e) => e.stopPropagation()}>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Row actions">
+                    <MoreHorizontal />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onSelect={() => setForm({ ...role })}>
+                    {editable ? <Pencil /> : <Eye />} {editable ? "Edit permissions" : "View permissions"}
+                  </DropdownMenuItem>
+                  {canAdd && (
+                    <DropdownMenuItem
+                      onSelect={() => setForm({ ...EMPTY, name: `${role.name} (copy)`, description: role.description || "", permissions: role.permissions })}
+                    >
+                      <Copy /> Duplicate
+                    </DropdownMenuItem>
+                  )}
+                  {canDelete && !role.is_system && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => setToDelete(role)}>
+                        <Trash2 /> Delete
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          );
+        },
+      },
+    ],
+    [labels, canEdit, canAdd, canDelete]
+  );
+
   async function save(e) {
     e.preventDefault();
     setSaving(true);
@@ -215,63 +335,17 @@ export default function Roles() {
 
       {error && <Alert>{error}</Alert>}
 
-      {loading ? (
-        <div className="grid gap-4 md:grid-cols-2">
-          {[0, 1, 2, 3].map((i) => (
-            <Skeleton key={i} className="h-40 w-full" />
-          ))}
-        </div>
-      ) : (
-        <div className="grid gap-4 md:grid-cols-2">
-          {roles.map((role) => (
-            <Card key={role.id} className="flex flex-col">
-              <CardContent className="flex flex-1 flex-col gap-3 p-5">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="flex items-center gap-2 font-semibold">
-                      {role.is_system ? <Lock className="h-4 w-4 text-purple-500" /> : <ShieldCheck className="h-4 w-4 text-primary" />}
-                      {role.name}
-                    </p>
-                    {role.description && <p className="mt-1 text-sm text-muted-foreground">{role.description}</p>}
-                  </div>
-                  <Badge variant="muted" className="shrink-0">
-                    <Users className="mr-1 h-3 w-3" /> {role.user_count}
-                  </Badge>
-                </div>
-                <div className="flex flex-wrap gap-1">
-                  {role.permissions.slice(0, 8).map((code) => (
-                    <Badge key={code} variant={code.endsWith(":view") ? "secondary" : code.endsWith(":delete") ? "danger" : "default"}>
-                      {labels[code] || code}
-                    </Badge>
-                  ))}
-                  {role.permissions.length > 8 && <Badge variant="outline">+{role.permissions.length - 8} more</Badge>}
-                  {role.permissions.length === 0 && <span className="text-xs text-muted-foreground">No permissions</span>}
-                </div>
-                <div className="mt-auto flex flex-wrap gap-2 pt-2">
-                  <Button size="sm" variant="outline" onClick={() => setForm({ ...role })}>
-                    {role.is_system || !can("roles:edit") ? <ShieldCheck /> : <Pencil />}
-                    {role.is_system || !can("roles:edit") ? "View permissions" : "Edit"}
-                  </Button>
-                  {can("roles:add") && (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => setForm({ ...EMPTY, name: `${role.name} (copy)`, description: role.description || "", permissions: role.permissions })}
-                    >
-                      <Copy /> Duplicate
-                    </Button>
-                  )}
-                  {can("roles:delete") && !role.is_system && (
-                    <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => setToDelete(role)}>
-                      <Trash2 /> Delete
-                    </Button>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
+      <DataTable
+        columns={columns}
+        data={roles}
+        loading={loading}
+        getRowId={(r) => String(r.id)}
+        onRowClick={(r) => setForm({ ...r })}
+        searchPlaceholder="Search roles..."
+        filters={[{ columnId: "type", label: "Type", options: TYPE_OPTIONS }]}
+        exportName="roles"
+        emptyText="No roles yet."
+      />
 
       <Dialog open={!!form} onOpenChange={(o) => !o && setForm(null)}>
         <DialogContent className="max-h-[92vh] max-w-3xl overflow-y-auto">

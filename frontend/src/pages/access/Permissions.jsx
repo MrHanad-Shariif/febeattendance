@@ -1,25 +1,23 @@
 import { useEffect, useMemo, useState } from "react";
-import { Search } from "lucide-react";
 import client, { apiErrorMessage } from "@/api/client";
+import { DataTable, DataTableColumnHeader, exactFilter } from "@/components/data-table";
 import { Alert, PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Skeleton } from "@/components/ui/skeleton";
-import { ACTIONS, groupCatalogue } from "./Roles.jsx";
+import { ACTIONS, ACTION_TONE } from "./Roles.jsx";
 
-const ACTION_TONE = { view: "secondary", add: "success", edit: "default", delete: "danger" };
+const ACTION_ORDER = Object.fromEntries(ACTIONS.map((a, i) => [a.key, i]));
+const ACTION_OPTIONS = ACTIONS.map((a) => ({ value: a.key, label: a.label }));
 
 /**
  * Authentication > Permissions: the fixed catalogue of "<resource>:<action>"
- * permissions the system checks, and which roles currently grant each one.
- * Permissions are defined by the application; roles are what admins edit.
+ * permissions the system checks, one row each, with the roles that
+ * currently grant it. Permissions are defined by the application; roles are
+ * what admins edit.
  */
 export default function Permissions() {
   const [catalogue, setCatalogue] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [query, setQuery] = useState("");
 
   useEffect(() => {
     client
@@ -29,82 +27,117 @@ export default function Permissions() {
       .finally(() => setLoading(false));
   }, []);
 
-  const groups = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const matches = (res, a) =>
-      !q ||
-      [res.label, res.resource, a.code, a.description, ...a.roles].some((t) => t && t.toLowerCase().includes(q));
-    const filtered = catalogue
-      .map((res) => ({ ...res, actions: res.actions.filter((a) => matches(res, a)) }))
-      .filter((res) => res.actions.length);
-    return groupCatalogue(filtered);
-  }, [catalogue, query]);
+  const rows = useMemo(
+    () =>
+      catalogue.flatMap((res, ri) =>
+        res.actions.map((a) => ({
+          ...a,
+          resource: res.resource,
+          screen: res.label,
+          group: res.group,
+          order: ri * 10 + ACTION_ORDER[a.action],
+        }))
+      ),
+    [catalogue]
+  );
 
-  const total = catalogue.reduce((n, r) => n + r.actions.length, 0);
+  const roleOptions = useMemo(
+    () => [...new Set(rows.flatMap((r) => r.roles))].sort().map((r) => ({ value: r, label: r })),
+    [rows]
+  );
 
+  const columns = useMemo(
+    () => [
+      {
+        accessorKey: "screen",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Screen / record" />,
+        meta: { label: "Screen / record" },
+        sortingFn: (a, b) => a.original.order - b.original.order,
+        cell: ({ row }) => (
+          <div className="min-w-[160px]">
+            <p className="font-medium">{row.original.screen}</p>
+            <p className="text-xs text-muted-foreground">{row.original.group}</p>
+          </div>
+        ),
+      },
+      {
+        accessorKey: "group",
+        header: "Group",
+        meta: { label: "Group" },
+        filterFn: exactFilter,
+      },
+      {
+        accessorKey: "action",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Action" />,
+        meta: { label: "Action", exportValue: (r) => r.label },
+        filterFn: exactFilter,
+        sortingFn: (a, b) => ACTION_ORDER[a.original.action] - ACTION_ORDER[b.original.action],
+        cell: ({ row }) => <Badge variant={ACTION_TONE[row.original.action]}>{row.original.label}</Badge>,
+      },
+      {
+        accessorKey: "code",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Code" />,
+        meta: { label: "Code" },
+        cell: ({ getValue }) => <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{getValue()}</code>,
+      },
+      {
+        accessorKey: "description",
+        header: "Allows",
+        enableSorting: false,
+        meta: { label: "Allows" },
+        cell: ({ getValue }) => <span className="text-muted-foreground">{getValue()}</span>,
+      },
+      {
+        id: "roles",
+        accessorFn: (r) => r.roles.join(", "),
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Granted by" />,
+        meta: { label: "Granted by" },
+        filterFn: (row, _id, value) => row.original.roles.includes(value),
+        sortingFn: (a, b) => a.original.roles.length - b.original.roles.length,
+        cell: ({ row }) =>
+          row.original.roles.length ? (
+            <div className="flex flex-wrap gap-1">
+              {row.original.roles.map((r) => (
+                <Badge key={r} variant="outline">
+                  {r}
+                </Badge>
+              ))}
+            </div>
+          ) : (
+            <span className="text-xs text-muted-foreground">No role</span>
+          ),
+      },
+    ],
+    []
+  );
+
+  const screens = catalogue.length;
   return (
     <div className="space-y-6">
       <PageHeader
         title="Permissions"
-        description={`${total} permissions across ${catalogue.length} screens. Each is one action (view, add, edit or delete) on one screen or record type; roles bundle them.`}
+        description={`${rows.length} permissions across ${screens} screens. Each is one action (view, add, edit or delete) on one screen or record type; roles bundle them.`}
       />
 
       {error && <Alert>{error}</Alert>}
 
-      <div className="relative max-w-sm">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input className="pl-9" placeholder="Search permission, screen or role..." value={query} onChange={(e) => setQuery(e.target.value)} />
-      </div>
-
-      {loading ? (
-        <Skeleton className="h-96 w-full" />
-      ) : (
-        groups.map((g) => (
-          <Card key={g.name}>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base">{g.name}</CardTitle>
-            </CardHeader>
-            <CardContent className="overflow-x-auto p-0">
-              <table className="w-full min-w-[640px] text-sm">
-                <thead className="border-y bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
-                  <tr>
-                    <th className="px-4 py-2 text-left font-medium">Permission</th>
-                    <th className="px-4 py-2 text-left font-medium">Allows</th>
-                    <th className="px-4 py-2 text-left font-medium">Granted by roles</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {g.resources.flatMap((res) =>
-                    ACTIONS.map((col) => res.actions.find((a) => a.action === col.key))
-                      .filter(Boolean)
-                      .map((a) => (
-                        <tr key={a.code} className="align-top hover:bg-accent/40">
-                          <td className="px-4 py-2.5">
-                            <p className="flex items-center gap-2 font-medium">
-                              {res.label}
-                              <Badge variant={ACTION_TONE[a.action]}>{a.label}</Badge>
-                            </p>
-                            <p className="font-mono text-[11px] text-muted-foreground">{a.code}</p>
-                          </td>
-                          <td className="px-4 py-2.5 text-muted-foreground">{a.description}</td>
-                          <td className="px-4 py-2.5">
-                            <div className="flex flex-wrap gap-1">
-                              {a.roles.map((r) => (
-                                <Badge key={r} variant="outline">
-                                  {r}
-                                </Badge>
-                              ))}
-                            </div>
-                          </td>
-                        </tr>
-                      ))
-                  )}
-                </tbody>
-              </table>
-            </CardContent>
-          </Card>
-        ))
-      )}
+      <DataTable
+        columns={columns}
+        data={rows}
+        loading={loading}
+        getRowId={(r) => r.code}
+        searchPlaceholder="Search permission, screen or role..."
+        filters={[
+          { columnId: "group", label: "Group" },
+          { columnId: "action", label: "Action", options: ACTION_OPTIONS },
+          { columnId: "roles", label: "Role", options: roleOptions },
+        ]}
+        initialSorting={[{ id: "screen", desc: false }]}
+        initialVisibility={{ group: false }}
+        pageSize={20}
+        exportName="permissions"
+        emptyText="No permissions match."
+      />
     </div>
   );
 }
