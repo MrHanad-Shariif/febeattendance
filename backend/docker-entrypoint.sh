@@ -23,5 +23,7 @@ PY
 
 flask init-db      # creates missing tables + default settings (never drops anything)
 flask seed-admin   # creates the first admin from DEFAULT_ADMIN_* if it does not exist
+# Location lookups for the system log; without it locations are just blank.
+flask update-geoip --if-missing || echo "GeoIP database download failed; sign-in locations stay blank until it succeeds."
 
 exec "$@"

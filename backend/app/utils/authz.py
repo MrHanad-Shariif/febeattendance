@@ -22,11 +22,13 @@ def password_fingerprint(user: User) -> str:
     return hashlib.sha256((user.password_hash or "").encode("utf-8")).hexdigest()[:16]
 
 
-def issue_token(user: User) -> str:
-    return create_access_token(
-        identity=str(user.id),
-        additional_claims={"role": user.role, "name": user.name, "pv": password_fingerprint(user)},
-    )
+def issue_token(user: User, session_id: str | None = None) -> str:
+    """``session_id`` ties the token to its sign-in in the system log (claim
+    ``sid``), so the actions made with it can be traced back to that sign-in."""
+    claims = {"role": user.role, "name": user.name, "pv": password_fingerprint(user)}
+    if session_id:
+        claims["sid"] = session_id
+    return create_access_token(identity=str(user.id), additional_claims=claims)
 
 
 def _unauthorized(message: str = "Your session has expired. Please sign in again."):

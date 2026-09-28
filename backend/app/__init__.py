@@ -7,6 +7,7 @@ from werkzeug.utils import safe_join
 from app.config import Config
 from app.extensions import db, migrate, jwt, cors, mail, scheduler, limiter
 from app.security import init_security
+from app.utils.activity_log import init_activity_log
 from app.utils.authz import roles_required
 
 
@@ -14,6 +15,7 @@ def create_app(config_class=Config):
     app = Flask(__name__)
     app.config.from_object(config_class)
     init_security(app)
+    init_activity_log(app)
 
     db.init_app(app)
     limiter.init_app(app)
@@ -202,6 +204,30 @@ def register_cli(app):
         from app.importers.import_confirmed_timetable import import_confirmed_timetable
 
         import_confirmed_timetable(xlsx_path)
+
+    @app.cli.command("update-geoip")
+    @click.option("--if-missing", is_flag=True, help="Only download when no database is installed yet.")
+    def update_geoip(if_missing):
+        """Download the free DB-IP city database used to show sign-in locations."""
+        from app.utils.geoip import database_path, download_database
+
+        if if_missing and os.path.exists(database_path()):
+            print("GeoIP database already installed.")
+            return
+        print(f"Installed {download_database()} -> {database_path()}")
+
+    @app.cli.command("import-access-log")
+    @click.argument("log_file", type=click.File("r"))
+    @click.option("--until", type=click.DateTime(), default=None,
+                  help="Campus time at which live logging started; later lines are skipped.")
+    def import_access_log_cmd(log_file, until):
+        """Rebuild system-log rows for the time before logging existed, from an
+        nginx access log ("-" reads stdin). Who signed in can't be recovered
+        from web-server logs, so those rows show an unknown user."""
+        from app.utils.log_import import import_access_log
+
+        added, skipped = import_access_log(log_file, until=until)
+        print(f"Imported {added} log rows ({skipped} already present or after live logging began).")
 
     @app.cli.command("import-students")
     @click.argument("roster_path")

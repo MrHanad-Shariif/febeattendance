@@ -17,3 +17,4 @@ gunicorn==22.0.0
 opencv-python-headless==5.0.0.93
 numpy>=2.0
 fpdf2==2.8.8
+maxminddb==3.2.0

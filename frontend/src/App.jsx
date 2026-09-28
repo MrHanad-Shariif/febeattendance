@@ -71,6 +71,7 @@ import { WithCommitteeSummary } from "./components/committees/NotificationBell.j
 import Users from "./pages/access/Users.jsx";
 import Roles from "./pages/access/Roles.jsx";
 import Permissions from "./pages/access/Permissions.jsx";
+import SystemLogs from "./pages/access/SystemLogs.jsx";
 import AllReports from "./pages/reports/AllReports.jsx";
 import CheckinMethods from "./pages/reports/CheckinMethods.jsx";
 import { homePath } from "./components/layout/nav-config";
@@ -179,6 +180,7 @@ export default function App() {
         <Route path="/access/users" element={allow(["users:view"], <Users />)} />
         <Route path="/access/roles" element={allow(["roles:view"], <Roles />)} />
         <Route path="/access/permissions" element={allow(["roles:view", "users:view"], <Permissions />)} />
+        <Route path="/access/logs" element={allow(["system_logs:view"], <SystemLogs />)} />
 
         {/* Committees & task management (lecturers and staff; the API checks each role) */}
         <Route path="/committees" element={guard(STAFF, <CommitteeList scope="mine" />)} />

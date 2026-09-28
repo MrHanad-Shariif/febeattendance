@@ -1199,3 +1199,66 @@ class SubmissionFile(db.Model):
             "url": f"/api/assignments/submissions/{self.submission_id}/files/{self.id}",
             "uploaded_at": self.uploaded_at.isoformat() if self.uploaded_at else None,
         }
+
+
+class ActivityLog(db.Model):
+    """System log: sign-ins (and failed attempts), sign-outs and every change
+    a signed-in user makes, with where it came from. Written by
+    utils/activity_log.py; rows are never edited.
+
+    ``session_id`` is issued at sign-in and carried in the token (claim
+    ``sid``), so each action can be traced back to the sign-in that made it.
+    Name, email and role are copied at write time so the log still reads
+    correctly after an account is renamed or deleted.
+    """
+    __tablename__ = "activity_logs"
+
+    EVENTS = ("login", "login_failed", "logout", "action")
+
+    id = db.Column(db.Integer, primary_key=True)
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False, index=True)
+    event = db.Column(db.String(20), nullable=False, index=True)
+    session_id = db.Column(db.String(64), nullable=True, index=True)
+
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    user_name = db.Column(db.String(200), nullable=True)
+    user_email = db.Column(db.String(255), nullable=True)  # the email typed, for failed sign-ins
+    user_role = db.Column(db.String(20), nullable=True)
+
+    action = db.Column(db.String(200), nullable=True)  # human-readable, e.g. "Created a committee"
+    area = db.Column(db.String(50), nullable=True)
+    method = db.Column(db.String(10), nullable=True)
+    path = db.Column(db.String(500), nullable=True)
+    status_code = db.Column(db.Integer, nullable=True)
+    detail = db.Column(db.String(500), nullable=True)
+
+    ip_address = db.Column(db.String(64), nullable=True)
+    location = db.Column(db.String(200), nullable=True)
+    user_agent = db.Column(db.String(500), nullable=True)
+    device = db.Column(db.String(200), nullable=True)
+    # "live" = recorded by the app; "imported" = rebuilt from web-server logs
+    # written before this log existed (who signed in is unknown for those).
+    source = db.Column(db.String(20), nullable=False, default="live")
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "event": self.event,
+            "session_id": self.session_id,
+            "user_id": self.user_id,
+            "user_name": self.user_name,
+            "user_email": self.user_email,
+            "user_role": self.user_role,
+            "action": self.action,
+            "area": self.area,
+            "method": self.method,
+            "path": self.path,
+            "status_code": self.status_code,
+            "detail": self.detail,
+            "ip_address": self.ip_address,
+            "location": self.location,
+            "user_agent": self.user_agent,
+            "device": self.device,
+            "source": self.source,
+        }

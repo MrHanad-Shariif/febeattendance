@@ -7,6 +7,9 @@ from flask_limiter.util import get_remote_address
 from app.auth import auth_bp
 from app.extensions import db, limiter
 from app.models import User, PasswordResetToken, Timetable
+from app.utils.activity_log import (
+    current_session_id, new_session_id, record_failed_login, record_login, record_logout, write as write_log,
+)
 from app.utils.authz import current_user, issue_token, roles_required
 from app.utils.constants import DEPARTMENTS
 from app.utils.email import send_password_reset_email, send_verification_email
@@ -65,16 +68,31 @@ def login():
         bcrypt.checkpw(password.encode("utf-8")[:72], _DUMMY_HASH)
         valid = False
     if not valid:
+        record_failed_login(email, user, "Wrong password" if user else "No account with this email")
         return jsonify({"error": "Invalid email or password"}), 401
 
     if user.status == "pending_verification":
+        record_failed_login(email, user, "Email not confirmed yet", 403)
         return jsonify({"error": "Please confirm your email address first -- check your inbox for the verification link."}), 403
     if user.status == "invited":
+        record_failed_login(email, user, "Account not activated yet", 403)
         return jsonify({"error": "Your account hasn't been activated yet -- check your email for the activation link."}), 403
     if user.status != "active":
+        record_failed_login(email, user, "Account is disabled", 403)
         return jsonify({"error": "This account is disabled. Contact the faculty office."}), 403
 
-    return jsonify({"access_token": issue_token(user), "user": {**user.to_dict(), "capabilities": capabilities(user)}})
+    session_id = new_session_id()
+    record_login(user, session_id)
+    return jsonify({"access_token": issue_token(user, session_id), "user": {**user.to_dict(), "capabilities": capabilities(user)}})
+
+
+@auth_bp.post("/logout")
+@roles_required()
+def logout():
+    """Only records the sign-out in the system log: tokens are stateless, the
+    browser discards its own."""
+    record_logout(current_user(), current_session_id())
+    return jsonify({"message": "Signed out"})
 
 
 @auth_bp.get("/batches")
@@ -193,7 +211,9 @@ def verify_email(token):
     verify_token.used_at = datetime.now()
     user.status = "active"
     db.session.commit()
-    return jsonify({"message": "Email confirmed!", "access_token": issue_token(user), "user": user.to_dict()})
+    session_id = new_session_id()
+    record_login(user, session_id, "Signed in after confirming email")
+    return jsonify({"message": "Email confirmed!", "access_token": issue_token(user, session_id), "user": user.to_dict()})
 
 
 @auth_bp.post("/resend-verification")
@@ -231,7 +251,7 @@ def change_password():
     user.set_password(new_password)
     db.session.commit()
     # The old token is now invalid (its password fingerprint changed); hand back a fresh one.
-    return jsonify({"message": "Password updated", "access_token": issue_token(user)})
+    return jsonify({"message": "Password updated", "access_token": issue_token(user, current_session_id())})
 
 
 @auth_bp.post("/forgot-password")
@@ -284,7 +304,9 @@ def activate():
     invite_token.used_at = datetime.now()
     db.session.commit()
 
-    return jsonify({"message": "Account activated", "access_token": issue_token(user), "user": {**user.to_dict(), "capabilities": capabilities(user)}})
+    session_id = new_session_id()
+    record_login(user, session_id, "Signed in after activating account")
+    return jsonify({"message": "Account activated", "access_token": issue_token(user, session_id), "user": {**user.to_dict(), "capabilities": capabilities(user)}})
 
 
 @auth_bp.post("/reset-password")
@@ -301,5 +323,7 @@ def reset_password():
     user.set_password(password)
     reset_token.used_at = datetime.now()
     db.session.commit()
+    write_log("action", user=user, action="Reset their password (email link)", area="Account",
+              method=request.method, path=request.path, status_code=200)
 
     return jsonify({"message": "Password has been reset. You can now log in."})

@@ -53,6 +53,17 @@ export function AuthProvider({ children }) {
   }
 
   function logout() {
+    // Record the sign-out in the system log. Plain fetch (not the axios client)
+    // so the token is read before it's cleared below and an expired one can't
+    // trigger the client's redirect; never waited on, never fails the logout.
+    const token = localStorage.getItem("access_token");
+    if (token) {
+      fetch(`${client.defaults.baseURL}/auth/logout`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        keepalive: true,
+      }).catch(() => {});
+    }
     localStorage.removeItem("access_token");
     localStorage.removeItem("user");
     setUser(null);

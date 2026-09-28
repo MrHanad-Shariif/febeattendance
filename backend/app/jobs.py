@@ -182,7 +182,22 @@ def task_deadline_sweep(app):
         db.session.commit()
 
 
+def refresh_geoip_database(app):
+    """DB-IP publishes a new free city database every month."""
+    with app.app_context():
+        from app.utils.geoip import download_database
+
+        try:
+            download_database()
+        except Exception:  # noqa: BLE001 -- keep the old file, try again next month
+            app.logger.exception("Monthly GeoIP database refresh failed")
+
+
 def register_jobs(app, scheduler):
+    scheduler.add_job(
+        id="refresh_geoip_database", func=refresh_geoip_database, args=[app],
+        trigger="cron", day=3, hour=3, minute=30, replace_existing=True,
+    )
     scheduler.add_job(
         id="mark_absentees", func=mark_absentees, args=[app],
         trigger="interval", minutes=2, replace_existing=True,

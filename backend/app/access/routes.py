@@ -10,12 +10,14 @@ out (all enforced here, whatever the UI shows):
 * Nobody changes their own roles or status, or deletes their own account.
 * There is always at least one active Super Admin.
 """
+from datetime import date, datetime, time, timedelta
+
 from flask import jsonify, request
 from sqlalchemy import func
 
 from app.access import access_bp
 from app.extensions import db
-from app.models import Permission, Role, User
+from app.models import ActivityLog, Permission, Role, User
 from app.utils.authz import STAFF_ROLES, current_user, permission_required
 from app.utils.invite import create_invited_user, resend_invite
 from app.utils.rbac import (
@@ -254,3 +256,91 @@ def delete_user(user_id):
     db.session.delete(user)
     db.session.commit()
     return jsonify({"message": "Deleted"})
+
+
+# ---------- System logs ----------
+
+LOG_LIMIT = 5000
+
+
+def _log_range() -> tuple[datetime, datetime]:
+    """?from=YYYY-MM-DD&to=YYYY-MM-DD (inclusive), default the last 7 days."""
+    def day(name, default):
+        raw = request.args.get(name)
+        if not raw:
+            return default
+        try:
+            return date.fromisoformat(raw)
+        except ValueError:
+            raise ValidationError(f"'{name}' must be a date like 2026-09-28")
+
+    today = date.today()
+    start = day("from", today - timedelta(days=6))
+    end = day("to", today)
+    if end < start:
+        raise ValidationError("'to' must not be before 'from'")
+    return datetime.combine(start, time.min), datetime.combine(end + timedelta(days=1), time.min)
+
+
+def _filtered_logs():
+    query = ActivityLog.query
+    session_id = request.args.get("session_id")
+    if session_id:
+        # One sign-in's whole trail, whatever the date range.
+        return query.filter(ActivityLog.session_id == session_id)
+    start, end = _log_range()
+    query = query.filter(ActivityLog.created_at >= start, ActivityLog.created_at < end)
+    events = [e for e in request.args.get("event", "").split(",") if e in ActivityLog.EVENTS]
+    if events:
+        query = query.filter(ActivityLog.event.in_(events))
+    user_id = request.args.get("user_id", type=int)
+    if user_id:
+        query = query.filter(ActivityLog.user_id == user_id)
+    return query
+
+
+@access_bp.get("/logs")
+@permission_required("system_logs:view")
+def list_logs():
+    """Log rows, newest first (at most LOG_LIMIT; narrow the dates for more)."""
+    rows = _filtered_logs().order_by(ActivityLog.created_at.desc(), ActivityLog.id.desc()).limit(LOG_LIMIT + 1).all()
+    return jsonify({"rows": [r.to_dict() for r in rows[:LOG_LIMIT]], "truncated": len(rows) > LOG_LIMIT})
+
+
+@access_bp.get("/logs/sessions")
+@permission_required("system_logs:view")
+def list_log_sessions():
+    """Sign-ins (and failed attempts) in the range, each with how many actions
+    it made, when it was last active and when it signed out."""
+    rows = (
+        _filtered_logs()
+        .filter(ActivityLog.event.in_(("login", "login_failed")))
+        .order_by(ActivityLog.created_at.desc(), ActivityLog.id.desc())
+        .limit(LOG_LIMIT + 1)
+        .all()
+    )
+    sids = [r.session_id for r in rows if r.session_id]
+    stats = {}
+    if sids:
+        stats = {
+            sid: (count, last, logout)
+            for sid, count, last, logout in db.session.query(
+                ActivityLog.session_id,
+                func.count(ActivityLog.id).filter(ActivityLog.event == "action"),
+                func.max(ActivityLog.created_at),
+                func.max(ActivityLog.created_at).filter(ActivityLog.event == "logout"),
+            )
+            .filter(ActivityLog.session_id.in_(sids))
+            .group_by(ActivityLog.session_id)
+        }
+
+    def payload(row):
+        count, last, logout = stats.get(row.session_id, (0, None, None))
+        return {
+            **row.to_dict(),
+            "action_count": count,
+            "last_seen_at": last.isoformat() if last else None,
+            "logged_out_at": logout.isoformat() if logout else None,
+        }
+
+    return jsonify({"rows": [payload(r) for r in rows[:LOG_LIMIT]], "truncated": len(rows) > LOG_LIMIT})

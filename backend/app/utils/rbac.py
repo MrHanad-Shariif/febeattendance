@@ -79,6 +79,9 @@ CATALOGUE = {
         "edit": "Assign roles, enable and disable staff accounts",
         "delete": "Delete staff accounts",
     }),
+    "system_logs": ("System logs", "Authentication", {
+        "view": "See who signed in, from which IP address, location and device, and what they did",
+    }),
     "roles": ("Roles & permissions", "Authentication", {
         "view": "See roles and which permissions each one grants",
         "add": "Create roles",
