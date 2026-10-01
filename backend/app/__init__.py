@@ -40,6 +40,7 @@ def create_app(config_class=Config):
     from app.access import access_bp
     from app.archive import archive_bp
     from app.assignments import assignments_bp
+    from app.special_exams import special_exams_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(admin_bp)
@@ -58,6 +59,7 @@ def create_app(config_class=Config):
     # Committee archive (memos, agendas, reports) and class assignments.
     app.register_blueprint(archive_bp)
     app.register_blueprint(assignments_bp)
+    app.register_blueprint(special_exams_bp)
 
     @app.get("/api/health")
     def health():

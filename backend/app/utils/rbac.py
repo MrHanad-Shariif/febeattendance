@@ -56,6 +56,10 @@ CATALOGUE = {
         "add": "Start board-code check-in for any lecturer's class",
         "edit": "Change the board code or close board check-in for any class",
     }),
+    "special_exams": ("Special exam requests", "Students", {
+        "view": "See students' special exam requests and download them as Excel",
+        "edit": "Approve or decline special exam requests",
+    }),
     "reports": ("Reports", "Reports", {
         "view": "Open every attendance report and export it",
     }),

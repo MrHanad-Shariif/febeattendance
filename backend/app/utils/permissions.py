@@ -194,6 +194,17 @@ def can_view_notice(user: User, post: InformationPost) -> bool:
 
 # ---------- What the SPA uses to build its menu (display only) ----------
 
+# ---------- Special exam requests ----------
+
+def can_view_special_exams(user: User) -> bool:
+    """The Administration Team, or a staff account whose role grants it."""
+    return user.role != "student" and (is_admin_team(user) or has_permission(user, "special_exams:view"))
+
+
+def can_decide_special_exams(user: User) -> bool:
+    return user.role != "student" and (is_admin_team(user) or has_permission(user, "special_exams:edit"))
+
+
 def capabilities(user: User) -> dict:
     if user.role == "student":
         return {"permissions": []}
@@ -209,6 +220,8 @@ def capabilities(user: User) -> dict:
         "secretary_committee_ids": sorted(m.committee_id for m in memberships if m.role == "secretary"),
         "can_view_archive": bool(officer_ids) or can_view_whole_archive(user),
         "member_committee_ids": sorted(m.committee_id for m in memberships),
+        "can_review_special_exams": can_view_special_exams(user),
+        "can_decide_special_exams": can_decide_special_exams(user),
         # Fine-grained RBAC permissions ("<resource>:<action>") for building
         # the menu and hiding buttons. Display only: the API checks each one.
         "permissions": sorted(user_permissions(user)),

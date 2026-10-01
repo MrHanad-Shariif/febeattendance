@@ -33,6 +33,8 @@ SUBJECTS = {
     "assignment_new": "New Assignment – {title}",
     "assignment_extended": "Assignment Deadline Extended – {title}",
     "assignment_comment": "Lecturer Comment on Your Assignment – {title}",
+    "special_exam_approved": "Special Exam Request Approved – {title}",
+    "special_exam_declined": "Special Exam Request Declined – {title}",
 }
 
 

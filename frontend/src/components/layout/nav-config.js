@@ -1,5 +1,6 @@
 import {
   Archive,
+  CalendarX2,
   Bell,
   NotebookPen,
   BookOpen,
@@ -62,6 +63,7 @@ export const NAV_BY_ROLE = {
     { label: "Timetable", icon: CalendarDays, to: "/student-timetable" },
     { label: "Assignments", icon: NotebookPen, to: "/assignments" },
     { label: "My report", icon: FileBarChart, to: "/student-report" },
+    { label: "Special exams", icon: CalendarX2, to: "/special-exams" },
   ],
 };
 
@@ -84,6 +86,7 @@ const MANAGEMENT = [
     children: [
       { label: "Overview", icon: ClipboardCheck, to: "/admin/student-overview", perms: ["student_attendance:view"] },
       { label: "Manage students", icon: Users, to: "/admin/students", perms: ["students:view"] },
+      { label: "Special exam requests", icon: CalendarX2, to: "/admin/special-exams", perms: ["special_exams:view"] },
       { label: "Class check-in (any class)", icon: KeyRound, to: "/class-code", perms: ["class_checkin:view"] },
     ],
   },
@@ -163,6 +166,10 @@ export function buildNav(user) {
       children: [
         { label: "Administration Team", icon: Building2, to: "/administration" },
         ...(caps.is_admin_team ? [{ label: "Publish minutes", icon: FileText, to: "/meeting-minutes/publish" }] : []),
+        // Shown under Students instead when a role grants special_exams:view.
+        ...(caps.is_admin_team && !can("special_exams:view")
+          ? [{ label: "Special exam requests", icon: CalendarX2, to: "/admin/special-exams" }]
+          : []),
       ],
     });
   }

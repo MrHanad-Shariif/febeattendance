@@ -1269,3 +1269,54 @@ class ActivityLog(db.Model):
             "device": self.device,
             "source": self.source,
         }
+
+
+class SpecialExamRequest(db.Model):
+    """A student's request to sit a special exam for one they missed.
+
+    Name, batch and ID number are what the student typed, kept as written
+    so the record and the Excel export still read correctly if the profile
+    changes later. The Administration Team approves or declines it."""
+    __tablename__ = "special_exam_requests"
+
+    STATUSES = ("pending", "approved", "declined")
+    SHIFTS = (1, 2)
+
+    id = db.Column(db.Integer, primary_key=True)
+    student_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    full_name = db.Column(db.String(200), nullable=False)
+    batch = db.Column(db.String(50), nullable=False)
+    course_name = db.Column(db.String(255), nullable=False)
+    reason = db.Column(db.Text, nullable=False)
+    exam_date = db.Column(db.Date, nullable=False)
+    shift = db.Column(db.Integer, nullable=False)
+    phone = db.Column(db.String(30), nullable=False)
+    id_number = db.Column(db.String(50), nullable=False)
+    status = db.Column(db.String(20), nullable=False, default="pending", index=True)
+    decision_note = db.Column(db.String(1000), nullable=True)
+    decided_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    decided_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=utcnow)
+
+    student = db.relationship("User", foreign_keys=[student_id])
+    decided_by = db.relationship("User", foreign_keys=[decided_by_id])
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "student_id": self.student_id,
+            "student_email": self.student.email if self.student else None,
+            "full_name": self.full_name,
+            "batch": self.batch,
+            "course_name": self.course_name,
+            "reason": self.reason,
+            "exam_date": self.exam_date.isoformat(),
+            "shift": self.shift,
+            "phone": self.phone,
+            "id_number": self.id_number,
+            "status": self.status,
+            "decision_note": self.decision_note,
+            "decided_by_name": self.decided_by.name if self.decided_by else None,
+            "decided_at": self.decided_at.isoformat() if self.decided_at else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }

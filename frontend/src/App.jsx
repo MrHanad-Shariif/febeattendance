@@ -22,6 +22,9 @@ import LecturerTimetable from "./pages/lecturer/Timetable.jsx";
 import LecturerAssignments from "./pages/assignments/LecturerAssignments.jsx";
 import LecturerAssignmentDetail from "./pages/assignments/LecturerAssignmentDetail.jsx";
 import { StudentAssignmentDetail, StudentAssignmentList } from "./pages/assignments/StudentAssignments.jsx";
+// Special exam registration (students apply, the Administration Team decides)
+import StudentSpecialExams from "./pages/special-exams/StudentSpecialExams.jsx";
+import SpecialExamReview from "./pages/special-exams/SpecialExamReview.jsx";
 
 // Committee archive: memos, meeting agendas and reports
 import Archive from "./pages/archive/Archive.jsx";
@@ -159,6 +162,7 @@ export default function App() {
         <Route path="/student-checkin" element={<QrLanding role="student"><StudentCheckIn /></QrLanding>} />
         <Route path="/student-timetable" element={guard(["student"], <StudentTimetable />)} />
         <Route path="/student-report" element={guard(["student"], <StudentReport />)} />
+        <Route path="/special-exams" element={guard(["student"], <StudentSpecialExams />)} />
 
         {/* Management screens (each needs its RBAC permission; the API checks too) */}
         <Route path="/admin" element={allow(["dashboard:view"], <WithCommitteeSummary><AdminDashboard /></WithCommitteeSummary>)} />
@@ -175,6 +179,8 @@ export default function App() {
         <Route path="/admin/committees" element={allow(["committees:add", "committees:edit", "committees:delete"], <AdminCommittees />)} />
         <Route path="/admin/faculty-roles" element={allow(["faculty_roles:view"], <FacultyRoles />)} />
         <Route path="/reports" element={guard(STAFF, <AllReports />)} />
+        {/* Administration Team or special_exams:view; the API checks too */}
+        <Route path="/admin/special-exams" element={guard(STAFF, <SpecialExamReview />)} />
 
         {/* Authentication: users, roles, permissions */}
         <Route path="/access/users" element={allow(["users:view"], <Users />)} />
