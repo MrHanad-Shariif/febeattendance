@@ -9,7 +9,7 @@ from datetime import date, datetime
 
 from app.extensions import db
 from app.models import User, Attendance, StudentAttendance
-from app.utils.email import send_checkin_reminder_email
+from app.utils.email import email_allowed, send_checkin_reminder_email
 from app.utils.schedule import get_day_classes, day_bounds, get_batch_classes, scheduled_datetimes
 from app.utils.settings import get_all_settings, get_setting_int, get_no_class_dates
 from app.utils.status import should_mark_absent, should_mark_no_checkout
@@ -68,7 +68,9 @@ def send_checkin_reminders(app):
     with app.app_context():
         settings = get_all_settings()
         reminder_minutes = get_setting_int("reminder_minutes_before", settings)
-        if reminder_minutes <= 0:
+        # Email switched off or outside sending hours: skip, and leave
+        # reminder_sent_at empty so the record doesn't claim one went out.
+        if reminder_minutes <= 0 or not email_allowed("reminder", settings):
             return
 
         today = date.today()

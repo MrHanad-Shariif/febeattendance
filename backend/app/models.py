@@ -355,6 +355,13 @@ class Setting(db.Model):
         "semester_end_date": ("2027-02-28", "Last day of the current semester, used the same way as semester_start_date."),
         "dean_task_override": ("off", "on = the Dean may assign and manage tasks and meetings in any committee, not only committees they chair. off = only each committee's chairperson can."),
         "board_code_close_after_minutes": ("20", "Board check-in closes by itself this many minutes after the class starts, if the lecturer hasn't closed it. Use 0 to keep it open until the class ends."),
+        "email_mode": ("on", "on = send emails as the switches and sending hours below allow. paused = send nothing for now; meeting, task and assignment emails wait and go out when switched back on (missed class reminders are not sent later). off = send nothing; waiting emails are cancelled, not kept."),
+        "email_notifications": ("on", "Meeting, task, minutes, information-sharing and assignment emails. off = these only appear as in-app notifications; any still waiting are cancelled."),
+        "email_checkin_reminders": ("on", "The 'class starting soon' email to lecturers who have not checked in. The timing is set under Lecturer rules."),
+        "email_account_messages": ("on", "Account invites, email confirmations and password resets. These ignore sending hours. While off, new users get no invite (use Resend invite later) and nobody can reset a forgotten password."),
+        "email_send_from": ("", "Earliest time of day emails may go out (HH:MM, campus time). Leave both times empty to send at any hour."),
+        "email_send_until": ("", "Emails stop at this time (HH:MM). If it is earlier than the start time the window runs overnight. Outside the window notifications wait and reminders are skipped."),
+        "email_send_days": ("Mon,Tue,Wed,Thu,Fri,Sat,Sun", "Days emails may go out. On other days notifications wait for the next sending day and reminders are skipped."),
     }
 
     def to_dict(self):
@@ -984,7 +991,7 @@ class EmailOutbox(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     subject = db.Column(db.String(255), nullable=False)
     html = db.Column(db.Text, nullable=False)
-    status = db.Column(db.String(20), nullable=False, default="pending", index=True)  # pending | sent | failed
+    status = db.Column(db.String(20), nullable=False, default="pending", index=True)  # pending | sent | failed | cancelled
     attempts = db.Column(db.Integer, nullable=False, default=0)
     last_error = db.Column(db.String(500), nullable=True)
     created_at = db.Column(db.DateTime, default=utcnow)

@@ -13,6 +13,7 @@ from markupsafe import escape
 
 from app.extensions import db
 from app.models import EmailOutbox, Notification, User, utcnow
+from app.utils.settings import get_all_settings, get_setting_str
 
 FACULTY_NAME = "Faculty of Engineering and Built Environment (FEBE)"
 SYSTEM_NAME = "FEBEMS"
@@ -79,6 +80,10 @@ def notify(
 ) -> int:
     """Notify each distinct, active user (students only when include_students
     is set). Returns how many were notified."""
+    # Paused or outside sending hours still queues (flush_outbox holds it);
+    # only "off" stops the email being queued at all.
+    if email_subject and not _queueing_emails():
+        email_subject = None
     seen: set[int] = set()
     count = 0
     for user in users:
@@ -101,9 +106,29 @@ def notify(
     return count
 
 
+def _queueing_emails(settings: dict | None = None) -> bool:
+    settings = settings if settings is not None else get_all_settings()
+    return (get_setting_str("email_mode", settings) != "off"
+            and get_setting_str("email_notifications", settings) != "off")
+
+
 def flush_outbox(batch_size: int = 50) -> int:
-    """Send up to batch_size pending emails. Returns how many were sent."""
-    from app.utils.email import _send
+    """Send up to batch_size pending emails, as Settings > Email allows.
+    Switched off: waiting emails are cancelled. Paused or outside sending
+    hours: they stay pending until sending is allowed. Returns how many
+    were sent."""
+    from app.utils.email import _send, email_allowed
+
+    settings = get_all_settings()
+    if not _queueing_emails(settings):
+        EmailOutbox.query.filter_by(status="pending").update(
+            {"status": "cancelled", "last_error": "Not sent: email was switched off in Settings"},
+            synchronize_session=False,
+        )
+        db.session.commit()
+        return 0
+    if not email_allowed("notification", settings):
+        return 0
 
     sent = 0
     pending = (

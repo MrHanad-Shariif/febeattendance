@@ -4,12 +4,14 @@ from datetime import datetime, date
 from calendar import monthrange
 
 from flask import request, jsonify, Response, current_app
+from sqlalchemy import func
 from sqlalchemy.orm import joinedload
 
 from app.admin import admin_bp
 from app.extensions import db
-from app.models import BoardSession, Course, User, Timetable, Attendance, Setting, StudentAttendance
+from app.models import BoardSession, Course, EmailOutbox, User, Timetable, Attendance, Setting, StudentAttendance
 from app.utils.authz import current_user, permission_required
+from app.utils.email import email_allowed, within_send_hours
 from app.utils.student_override import apply_override
 from app.utils.invite import create_invited_user, resend_invite
 from app.utils.settings import get_no_class_dates, ensure_defaults_seeded, get_all_settings
@@ -274,6 +276,36 @@ def update_settings():
 
     db.session.commit()
     return jsonify([r.to_dict() for r in Setting.query.order_by(Setting.key).all()])
+
+
+@admin_bp.get("/email-status")
+@permission_required("settings:view")
+def email_status():
+    """What Settings > Email means right now, plus the queue counts."""
+    settings = get_all_settings()
+    mode = settings.get("email_mode", "on")
+    if not current_app.config.get("MAIL_USERNAME"):
+        state, detail = "unconfigured", "The mail server is not set up on the server, so no email can be sent."
+    elif mode == "off":
+        state, detail = "off", "Email is switched off. Nothing is sent and nothing is kept for later."
+    elif mode == "paused":
+        state, detail = "paused", "Email is paused. Meeting, task and assignment emails are waiting and will go out when you switch it back on."
+    elif not within_send_hours(settings):
+        state, detail = "waiting", "Outside sending hours. Notifications are waiting for the next sending window; class reminders are skipped."
+    else:
+        state, detail = "sending", "Emails are going out as the switches below allow."
+
+    counts = dict(
+        db.session.query(EmailOutbox.status, func.count(EmailOutbox.id)).group_by(EmailOutbox.status).all()
+    )
+    last_sent = db.session.query(func.max(EmailOutbox.sent_at)).scalar()
+    return jsonify({
+        "state": state,
+        "detail": detail,
+        "kinds": {kind: email_allowed(kind, settings) for kind in ("notification", "reminder", "account")},
+        "queue": {s: counts.get(s, 0) for s in ("pending", "sent", "failed", "cancelled")},
+        "last_sent_at": last_sent.isoformat() if last_sent else None,
+    })
 
 
 # ---------- Today / attendance / summary ----------

@@ -177,6 +177,21 @@ def validate_settings(data: dict, current: dict) -> dict[str, str]:
                 raise ValidationError("dean_task_override must be on or off")
         elif key == "face_max_attempts_per_session":
             clean_int(value, key, minimum=1, maximum=20)
+        elif key == "email_mode":
+            if value not in ("on", "paused", "off"):
+                raise ValidationError("email_mode must be on, paused or off")
+        elif key in ("email_notifications", "email_checkin_reminders", "email_account_messages"):
+            if value not in ("on", "off"):
+                raise ValidationError(f"{key} must be on or off")
+        elif key in ("email_send_from", "email_send_until"):
+            label = "Send emails from" if key == "email_send_from" else "Send emails until"
+            parsed = parse_hhmm(value, label)
+            value = parsed.strftime("%H:%M") if parsed else ""
+        elif key == "email_send_days":
+            days = clean_days([d.strip() for d in value.split(",") if d.strip()])
+            if not days:
+                raise ValidationError("Pick at least one sending day, or set Email sending to Paused or Off")
+            value = ",".join(d for d in VALID_DAYS if d in days.split(","))  # week order
 
         cleaned[key] = value
         merged[key] = value
@@ -186,6 +201,11 @@ def validate_settings(data: dict, current: dict) -> dict[str, str]:
         end = parse_iso_date(merged.get("semester_end_date"), "semester_end_date")
         if end < start:
             raise ValidationError("Semester end date must not be before the start date")
+
+    if "email_send_from" in cleaned or "email_send_until" in cleaned:
+        start, end = merged.get("email_send_from") or "", merged.get("email_send_until") or ""
+        if start and start == end:
+            raise ValidationError("Sending hours need different start and end times (leave both empty to send at any hour)")
 
     return cleaned
 

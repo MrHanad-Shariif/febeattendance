@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Save, UserCog } from "lucide-react";
+import { Mail, Save, UserCog } from "lucide-react";
 import { toast } from "sonner";
 import client, { apiErrorMessage } from "@/api/client";
 import { Alert, PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -55,20 +57,43 @@ const COMMITTEE_FIELD_LABELS = {
   dean_task_override: "Dean may manage any committee",
 };
 
+const EMAIL_SWITCH_LABELS = {
+  email_mode: "Email sending",
+  email_notifications: "Meeting, task & assignment emails",
+  email_checkin_reminders: "Class check-in reminders",
+  email_account_messages: "Account emails (invites, password resets)",
+};
+
+const EMAIL_HOURS_LABELS = {
+  email_send_from: "Send emails from",
+  email_send_until: "Send emails until",
+  email_send_days: "Sending days",
+};
+
 const FIELD_LABELS = {
   ...GENERAL_FIELD_LABELS,
   ...LOCATION_FIELD_LABELS,
   ...LECTURER_FIELD_LABELS,
   ...STUDENT_FIELD_LABELS,
   ...COMMITTEE_FIELD_LABELS,
+  ...EMAIL_SWITCH_LABELS,
+  ...EMAIL_HOURS_LABELS,
 };
 const GENERAL_FIELD_ORDER = Object.keys(GENERAL_FIELD_LABELS);
 const LOCATION_FIELD_ORDER = Object.keys(LOCATION_FIELD_LABELS);
 const LECTURER_FIELD_ORDER = Object.keys(LECTURER_FIELD_LABELS);
 const STUDENT_FIELD_ORDER = Object.keys(STUDENT_FIELD_LABELS);
 const COMMITTEE_FIELD_ORDER = Object.keys(COMMITTEE_FIELD_LABELS);
+const EMAIL_SWITCH_ORDER = Object.keys(EMAIL_SWITCH_LABELS);
+const EMAIL_HOURS_ORDER = Object.keys(EMAIL_HOURS_LABELS);
 
 const DATE_KEYS = new Set(["semester_start_date", "semester_end_date"]);
+const TIME_KEYS = new Set(["email_send_from", "email_send_until"]);
+const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const ON_OFF = [
+  ["on", "On"],
+  ["off", "Off"],
+];
 const VERIFICATION_OPTIONS = [
   ["both", "Both code and location required"],
   ["either", "Either code or location"],
@@ -87,7 +112,81 @@ const SELECT_OPTIONS = {
     ["off", "Off: only each committee's chairperson"],
     ["on", "On: the Dean may also assign tasks and schedule meetings"],
   ],
+  email_mode: [
+    ["on", "On: send emails"],
+    ["paused", "Paused: hold emails and send them later"],
+    ["off", "Off: send no emails at all"],
+  ],
+  email_notifications: ON_OFF,
+  email_checkin_reminders: ON_OFF,
+  email_account_messages: ON_OFF,
 };
+
+function DaysPicker({ value, onChange, disabled }) {
+  const selected = new Set((value || "").split(",").filter(Boolean));
+  const toggle = (day, checked) => {
+    const next = new Set(selected);
+    if (checked) next.add(day);
+    else next.delete(day);
+    onChange(WEEKDAYS.filter((d) => next.has(d)).join(","));
+  };
+  return (
+    <div className="flex flex-wrap gap-x-4 gap-y-2 pt-2">
+      {WEEKDAYS.map((day) => (
+        <label key={day} className="flex items-center gap-1.5 text-sm">
+          <Checkbox checked={selected.has(day)} onCheckedChange={(c) => toggle(day, c === true)} disabled={disabled} />
+          {day}
+        </label>
+      ))}
+    </div>
+  );
+}
+
+const STATE_BADGES = {
+  sending: ["Sending", "success"],
+  waiting: ["Waiting for sending hours", "info"],
+  paused: ["Paused", "warning"],
+  off: ["Off", "danger"],
+  unconfigured: ["Mail server not set up", "danger"],
+};
+
+function EmailStatus({ status }) {
+  if (!status) return null;
+  const [label, variant] = STATE_BADGES[status.state] || [status.state, "secondary"];
+  const q = status.queue;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex flex-wrap items-center gap-2 text-base">
+          <Mail className="h-4 w-4 text-primary" /> Email right now <Badge variant={variant}>{label}</Badge>
+        </CardTitle>
+        <CardDescription>{status.detail}</CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-3 text-sm sm:grid-cols-4">
+        <div>
+          <div className="text-2xl font-semibold">{q.pending}</div>
+          <div className="text-muted-foreground">Waiting to send</div>
+        </div>
+        <div>
+          <div className="text-2xl font-semibold">{q.sent}</div>
+          <div className="text-muted-foreground">Sent</div>
+        </div>
+        <div>
+          <div className="text-2xl font-semibold">{q.failed}</div>
+          <div className="text-muted-foreground">Failed</div>
+        </div>
+        <div>
+          <div className="text-2xl font-semibold">{q.cancelled}</div>
+          <div className="text-muted-foreground">Cancelled (email off)</div>
+        </div>
+        <p className="text-xs text-muted-foreground sm:col-span-4">
+          Counts cover meeting, task and assignment emails.
+          {status.last_sent_at && ` Last one sent ${new Date(status.last_sent_at).toLocaleString()}.`}
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
 
 function SettingField({ fieldKey, settings, descriptions, setSettings, disabled }) {
   const update = (value) => setSettings((s) => ({ ...s, [fieldKey]: value }));
@@ -97,7 +196,9 @@ function SettingField({ fieldKey, settings, descriptions, setSettings, disabled 
         {FIELD_LABELS[fieldKey]}
       </Label>
       <div className="sm:col-span-2">
-        {SELECT_OPTIONS[fieldKey] ? (
+        {fieldKey === "email_send_days" ? (
+          <DaysPicker value={settings[fieldKey]} onChange={update} disabled={disabled} />
+        ) : SELECT_OPTIONS[fieldKey] ? (
           <Select value={settings[fieldKey] || undefined} onValueChange={update} disabled={disabled}>
             <SelectTrigger id={fieldKey}>
               <SelectValue placeholder="Choose a mode" />
@@ -113,7 +214,7 @@ function SettingField({ fieldKey, settings, descriptions, setSettings, disabled 
         ) : (
           <Input
             id={fieldKey}
-            type={DATE_KEYS.has(fieldKey) ? "date" : "text"}
+            type={DATE_KEYS.has(fieldKey) ? "date" : TIME_KEYS.has(fieldKey) ? "time" : "text"}
             value={settings[fieldKey] || ""}
             disabled={disabled}
             onChange={(e) => update(e.target.value)}
@@ -149,6 +250,13 @@ export default function Settings() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [emailStatus, setEmailStatus] = useState(null);
+
+  const loadEmailStatus = () =>
+    client
+      .get("/admin/email-status")
+      .then((res) => setEmailStatus(res.data))
+      .catch(() => setEmailStatus(null));
 
   useEffect(() => {
     client
@@ -165,6 +273,7 @@ export default function Settings() {
       })
       .catch((err) => setError(apiErrorMessage(err)))
       .finally(() => setLoading(false));
+    loadEmailStatus();
   }, []);
 
   async function handleSave(e) {
@@ -174,6 +283,7 @@ export default function Settings() {
     try {
       await client.put("/admin/settings", settings);
       toast.success("Settings saved");
+      loadEmailStatus();
     } catch (err) {
       setError(apiErrorMessage(err));
     } finally {
@@ -194,6 +304,7 @@ export default function Settings() {
           <TabsTrigger value="lecturer">Lecturer rules</TabsTrigger>
           <TabsTrigger value="student">Student rules</TabsTrigger>
           <TabsTrigger value="committees">Committees</TabsTrigger>
+          <TabsTrigger value="email">Email</TabsTrigger>
           <TabsTrigger value="admins">Admin accounts</TabsTrigger>
         </TabsList>
 
@@ -242,6 +353,21 @@ export default function Settings() {
                 title="Committee permissions"
                 description="Task management belongs to each committee's chairperson unless this override is switched on."
                 fields={COMMITTEE_FIELD_ORDER}
+                {...fieldProps}
+              />
+            </TabsContent>
+            <TabsContent value="email" className="space-y-4">
+              <EmailStatus status={emailStatus} />
+              <SettingsCard
+                title="What gets emailed"
+                description="Turn all email on, pause it, or switch it off, and choose which kinds go out. In-app notifications are not affected."
+                fields={EMAIL_SWITCH_ORDER}
+                {...fieldProps}
+              />
+              <SettingsCard
+                title="Sending hours"
+                description="When emails may go out, in campus time. Account emails (invites, password resets) are always sent straight away."
+                fields={EMAIL_HOURS_ORDER}
                 {...fieldProps}
               />
             </TabsContent>
