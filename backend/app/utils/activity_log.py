@@ -120,6 +120,16 @@ ACTIONS = {
     "assignments.download_brief": ("Assignments", "Downloaded an assignment brief"),
     "assignments.download_submission_file": ("Assignments", "Downloaded a submitted file"),
 
+    # Timetable upload, batches and rooms
+    "admin.preview_timetable_upload": None,
+    "admin.upload_timetable": ("Timetable", "Replaced the timetable from an Excel upload"),
+    "admin.create_batch": ("Timetable", "Added a batch"),
+    "admin.update_batch": ("Timetable", "Edited a batch"),
+    "admin.delete_batch": ("Timetable", "Deleted a batch"),
+    "admin.create_room": ("Timetable", "Added a room"),
+    "admin.update_room": ("Timetable", "Edited a room"),
+    "admin.delete_room": ("Timetable", "Deleted a room"),
+
     # Special exams
     "special_exams.create_request": ("Special exams", "Registered for a special exam"),
     "special_exams.decide": ("Special exams", "Decided a special exam request"),

@@ -1,6 +1,6 @@
 import csv
 import io
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from calendar import monthrange
 
 from flask import request, jsonify, Response, current_app
@@ -9,14 +9,19 @@ from sqlalchemy.orm import joinedload
 
 from app.admin import admin_bp
 from app.extensions import db
-from app.models import BoardSession, Course, EmailOutbox, User, Timetable, Attendance, Setting, StudentAttendance
+from app.models import (
+    Batch, BoardCodeAttempt, BoardSession, Course, EmailOutbox, FaceCheckAttempt, Room, User, Timetable, Attendance, Setting, StudentAttendance,
+)
 from app.utils.authz import current_user, permission_required
+from app.utils.batches import batch_filter, members
+from app.utils.rbac import has_permission
 from app.utils.email import email_allowed, within_send_hours
 from app.utils.student_override import apply_override
 from app.utils.invite import create_invited_user, resend_invite
 from app.utils.settings import get_no_class_dates, ensure_defaults_seeded, get_all_settings
 from app.utils.today import get_today_rows
-from app.utils.schedule import teaches_on, get_day_classes, get_batch_classes, scheduled_datetimes
+from app.utils.schedule import day_abbr, teaches_on, get_day_classes, get_batch_classes, scheduled_datetimes
+from app.utils.timetable_upload import apply_plan, build_plan, plan_summary, week_start_for
 from app.utils.qr import generate_qr_png
 from app.utils.student_report import build_student_report
 from app.utils.student_status import compute_course_stats, should_mark_student_absent
@@ -132,6 +137,17 @@ def _timetable_fields(data: dict, partial: bool = False) -> dict:
     return fields
 
 
+def _optional_lecturer(value) -> User | None:
+    """A class may have no lecturer yet ("not assigned")."""
+    lecturer_id = clean_int(value, "Lecturer", minimum=1)
+    if not lecturer_id:
+        return None
+    lecturer = User.query.filter_by(id=lecturer_id, role="lecturer").first()
+    if not lecturer:
+        raise ValidationError("Unknown lecturer")
+    return lecturer
+
+
 @admin_bp.get("/timetable")
 @permission_required("timetable:view")
 def list_timetable():
@@ -147,12 +163,9 @@ def list_timetable():
 @permission_required("timetable:add")
 def create_timetable_entry():
     data = request.get_json(silent=True) or {}
-    lecturer_id = clean_int(data.get("lecturer_id"), "Lecturer", minimum=1)
-    lecturer = User.query.filter_by(id=lecturer_id, role="lecturer").first() if lecturer_id else None
-    if not lecturer:
-        return jsonify({"error": "Unknown lecturer"}), 400
+    lecturer = _optional_lecturer(data.get("lecturer_id"))
 
-    entry = Timetable(lecturer_id=lecturer.id, **_timetable_fields(data))
+    entry = Timetable(lecturer_id=lecturer.id if lecturer else None, **_timetable_fields(data))
     db.session.add(entry)
     db.session.commit()
     return jsonify(entry.to_dict()), 201
@@ -165,11 +178,8 @@ def update_timetable_entry(entry_id):
     data = request.get_json(silent=True) or {}
 
     if "lecturer_id" in data:
-        lecturer_id = clean_int(data.get("lecturer_id"), "Lecturer", minimum=1)
-        lecturer = User.query.filter_by(id=lecturer_id, role="lecturer").first() if lecturer_id else None
-        if not lecturer:
-            return jsonify({"error": "Unknown lecturer"}), 400
-        entry.lecturer_id = lecturer.id
+        lecturer = _optional_lecturer(data.get("lecturer_id"))
+        entry.lecturer_id = lecturer.id if lecturer else None
     for key, value in _timetable_fields(data, partial=True).items():
         setattr(entry, key, value)
 
@@ -181,9 +191,209 @@ def update_timetable_entry(entry_id):
 @permission_required("timetable:delete")
 def delete_timetable_entry(entry_id):
     entry = Timetable.query.get_or_404(entry_id)
+    if StudentAttendance.query.filter_by(timetable_id=entry.id).first():
+        raise ValidationError("This class already has student attendance, so it can't be deleted. "
+                              "Change it instead, or replace the timetable by uploading a new one.", status=409)
+    for model in (BoardCodeAttempt, FaceCheckAttempt, BoardSession):
+        model.query.filter_by(timetable_id=entry.id).delete()
     db.session.delete(entry)
     db.session.commit()
     return jsonify({"message": "Deleted"})
+
+
+# ---------- Timetable upload (Excel, one sheet per batch) ----------
+
+def _uploaded_workbook() -> bytes:
+    upload = request.files.get("file")
+    if not upload or not upload.filename:
+        raise ValidationError("Choose the timetable Excel file (.xlsx)")
+    if not upload.filename.lower().endswith((".xlsx", ".xlsm")):
+        raise ValidationError("Upload the timetable as an .xlsx file (in Excel: File > Save As > Excel Workbook)")
+    return upload.read()
+
+
+@admin_bp.post("/timetable/upload/preview")
+@permission_required("timetable:add")
+def preview_timetable_upload():
+    """Read the workbook and say what the upload would do; nothing is saved."""
+    return jsonify(plan_summary(build_plan(_uploaded_workbook())))
+
+
+@admin_bp.post("/timetable/upload")
+@permission_required("timetable:add")
+def upload_timetable():
+    """Replace the whole timetable with the workbook's classes."""
+    user = current_user()
+    if not (has_permission(user, "timetable:edit") and has_permission(user, "timetable:delete")):
+        raise ValidationError("Replacing the timetable needs the timetable Add, Edit and Delete permissions.", status=403)
+    delete_history = str(request.form.get("delete_history", "")).lower() in ("1", "true", "yes", "on")
+    return jsonify(apply_plan(build_plan(_uploaded_workbook()), delete_history))
+
+
+@admin_bp.get("/timetable/batch-week")
+@permission_required("timetable:view")
+def batch_week():
+    """One batch's classes for one teaching week (Saturday to Friday), with
+    the real date of each class. A shared class ("BTE13&BEE11") shows for
+    both batches; no-class dates from Settings are marked."""
+    batch = clean_text(request.args.get("batch"), "Batch", max_len=50, required=True)
+    raw = request.args.get("date")
+    start = week_start_for(parse_iso_date(raw, "Date") if raw else date.today())
+    query = Timetable.query.filter(Timetable.start_time.isnot(None))
+    query = query.filter(Timetable.batch == batch) if "&" in batch else query.filter(batch_filter(Timetable.batch, batch))
+    entries = sorted(query.all(), key=lambda e: e.start_time)
+    no_class_dates = get_no_class_dates()
+
+    days = []
+    for offset in range(7):
+        d = start + timedelta(days=offset)
+        meeting = [e for e in entries if day_abbr(d) in e.day_list()]
+        days.append({
+            "date": d.isoformat(),
+            "day": d.strftime("%A"),
+            "no_class": d.isoformat() in no_class_dates,
+            "classes": [{
+                "timetable_id": e.id,
+                "batch": e.batch,
+                "start_time": e.start_time.strftime("%H:%M"),
+                "end_time": e.end_time.strftime("%H:%M") if e.end_time else None,
+                "lecturer_name": e.lecturer.name if e.lecturer else None,
+                "course_name": e.course_name,
+                "room": e.room,
+            } for e in meeting],
+        })
+    return jsonify({
+        "batch": batch,
+        "week_start": start.isoformat(),
+        "week_end": (start + timedelta(days=6)).isoformat(),
+        "days": days,
+    })
+
+
+# ---------- Batches and rooms (the lists the timetable picks from) ----------
+
+def _usage(column, value: str) -> int:
+    return Timetable.query.filter(column == value).count()
+
+
+@admin_bp.get("/batches")
+@permission_required("timetable:view", "students:view")
+def list_batches():
+    students = dict(db.session.query(User.batch, func.count(User.id)).filter(User.role == "student").group_by(User.batch).all())
+    classes = dict(db.session.query(Timetable.batch, func.count(Timetable.id)).group_by(Timetable.batch).all())
+    out = []
+    for b in Batch.query.order_by(Batch.code).all():
+        data = b.to_dict()
+        data["student_count"] = sum(students.get(m, 0) for m in members(b.code)) if b.combined else students.get(b.code, 0)
+        data["class_count"] = classes.get(b.code, 0)
+        out.append(data)
+    return jsonify(out)
+
+
+def _batch_fields(data) -> dict:
+    code = clean_text(data.get("code"), "Batch code", max_len=50, required=True).replace(" & ", "&").upper()
+    return {
+        "code": code,
+        "name": clean_text(data.get("name"), "Name", max_len=150),
+        "department": clean_text(data.get("department"), "Department", max_len=150),
+        "note": clean_text(data.get("note"), "Note", max_len=500),
+    }
+
+
+@admin_bp.post("/batches")
+@permission_required("timetable:add")
+def create_batch():
+    fields = _batch_fields(request.get_json(silent=True) or {})
+    if Batch.query.filter(func.lower(Batch.code) == fields["code"].lower()).first():
+        raise ValidationError(f"Batch {fields['code']} already exists", status=409)
+    batch = Batch(**fields)
+    db.session.add(batch)
+    db.session.commit()
+    return jsonify(batch.to_dict()), 201
+
+
+@admin_bp.put("/batches/<int:batch_id>")
+@permission_required("timetable:edit")
+def update_batch(batch_id):
+    batch = Batch.query.get_or_404(batch_id)
+    fields = _batch_fields(request.get_json(silent=True) or {})
+    if fields["code"] != batch.code:
+        if Batch.query.filter(func.lower(Batch.code) == fields["code"].lower(), Batch.id != batch.id).first():
+            raise ValidationError(f"Batch {fields['code']} already exists", status=409)
+        # Renaming a batch renames it everywhere it is used.
+        Timetable.query.filter_by(batch=batch.code).update({"batch": fields["code"]})
+        Course.query.filter_by(batch=batch.code).update({"batch": fields["code"]})
+        User.query.filter_by(role="student", batch=batch.code).update({"batch": fields["code"]})
+    for key, value in fields.items():
+        setattr(batch, key, value)
+    db.session.commit()
+    return jsonify(batch.to_dict())
+
+
+@admin_bp.delete("/batches/<int:batch_id>")
+@permission_required("timetable:delete")
+def delete_batch(batch_id):
+    batch = Batch.query.get_or_404(batch_id)
+    if _usage(Timetable.batch, batch.code) or User.query.filter_by(role="student", batch=batch.code).first():
+        raise ValidationError(f"{batch.code} still has classes or students, so it can't be deleted.", status=409)
+    db.session.delete(batch)
+    db.session.commit()
+    return jsonify({"message": "Batch deleted"})
+
+
+@admin_bp.get("/rooms")
+@permission_required("timetable:view")
+def list_rooms():
+    used = dict(db.session.query(Timetable.room, func.count(Timetable.id)).group_by(Timetable.room).all())
+    rooms = sorted(Room.query.all(), key=lambda r: (len(r.name), r.name))
+    return jsonify([dict(r.to_dict(), class_count=used.get(r.name, 0)) for r in rooms])
+
+
+def _room_fields(data) -> dict:
+    return {
+        "name": clean_text(data.get("name"), "Room", max_len=100, required=True),
+        "building": clean_text(data.get("building"), "Building", max_len=150),
+        "capacity": clean_int(data.get("capacity"), "Capacity", minimum=1, maximum=2000),
+        "note": clean_text(data.get("note"), "Note", max_len=500),
+    }
+
+
+@admin_bp.post("/rooms")
+@permission_required("timetable:add")
+def create_room():
+    fields = _room_fields(request.get_json(silent=True) or {})
+    if Room.query.filter(func.lower(Room.name) == fields["name"].lower()).first():
+        raise ValidationError(f"Room {fields['name']} already exists", status=409)
+    room = Room(**fields)
+    db.session.add(room)
+    db.session.commit()
+    return jsonify(room.to_dict()), 201
+
+
+@admin_bp.put("/rooms/<int:room_id>")
+@permission_required("timetable:edit")
+def update_room(room_id):
+    room = Room.query.get_or_404(room_id)
+    fields = _room_fields(request.get_json(silent=True) or {})
+    if fields["name"] != room.name:
+        if Room.query.filter(func.lower(Room.name) == fields["name"].lower(), Room.id != room.id).first():
+            raise ValidationError(f"Room {fields['name']} already exists", status=409)
+        Timetable.query.filter_by(room=room.name).update({"room": fields["name"]})
+    for key, value in fields.items():
+        setattr(room, key, value)
+    db.session.commit()
+    return jsonify(room.to_dict())
+
+
+@admin_bp.delete("/rooms/<int:room_id>")
+@permission_required("timetable:delete")
+def delete_room(room_id):
+    room = Room.query.get_or_404(room_id)
+    if _usage(Timetable.room, room.name):
+        raise ValidationError(f"Room {room.name} is used by classes in the timetable, so it can't be deleted.", status=409)
+    db.session.delete(room)
+    db.session.commit()
+    return jsonify({"message": "Room deleted"})
 
 
 # ---------- Course catalogue (courses offered and who teaches them) ----------
@@ -582,13 +792,15 @@ def student_attendance_today():
     today = date.today()
     no_class_dates = get_no_class_dates()
 
-    batches = sorted({b[0] for b in User.query.filter_by(role="student").with_entities(User.batch).distinct().all() if b[0]})
+    # One row per class meeting today; a class shared by two batches
+    # ("BTE13&BEE11") counts the students of both.
+    entries = [e for e in Timetable.query.filter(Timetable.batch.isnot(None), Timetable.start_time.isnot(None)).all()
+               if teaches_on(e, today, no_class_dates)]
 
     rows = []
-    for batch in batches:
-        entries = get_batch_classes(batch, today, no_class_dates)
-        total_students = User.query.filter_by(role="student", batch=batch, status="active").count()
-        for entry in entries:
+    for batch in sorted({e.batch for e in entries}):
+        total_students = User.query.filter(User.role == "student", User.batch.in_(members(batch)), User.status == "active").count()
+        for entry in (e for e in entries if e.batch == batch):
             records = StudentAttendance.query.filter_by(timetable_id=entry.id, date=today).all()
             counts = {"on_time": 0, "late": 0, "absent": 0, "present": 0}
             for r in records:
@@ -627,7 +839,7 @@ def student_attendance_session(timetable_id):
     the_date = date.fromisoformat(date_str) if date_str else date.today()
 
     settings = get_all_settings()
-    students = User.query.filter_by(role="student", batch=entry.batch, status="active").order_by(User.name).all()
+    students = User.query.filter(User.role == "student", User.batch.in_(members(entry.batch)), User.status == "active").order_by(User.name).all()
     existing = {
         r.student_id: r
         for r in StudentAttendance.query.filter_by(timetable_id=timetable_id, date=the_date).all()
@@ -677,7 +889,7 @@ def update_student_attendance(record_id):
 @admin_bp.get("/reports/class/<batch>")
 @permission_required("reports:view")
 def class_report(batch):
-    students = User.query.filter_by(role="student", batch=batch).order_by(User.name).all()
+    students = User.query.filter(User.role == "student", User.batch.in_(members(batch))).order_by(User.name).all()
     rows = []
     for student in students:
         report = build_student_report(student)
@@ -703,7 +915,7 @@ def course_report():
         return jsonify({"error": "batch and course_name are required"}), 400
 
     settings = get_all_settings()
-    students = User.query.filter_by(role="student", batch=batch).order_by(User.name).all()
+    students = User.query.filter(User.role == "student", User.batch.in_(members(batch))).order_by(User.name).all()
     rows = []
     for student in students:
         stats = compute_course_stats(student.id, batch, course_name, settings)

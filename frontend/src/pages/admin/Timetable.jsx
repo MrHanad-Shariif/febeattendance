@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react";
+import { FileSpreadsheet, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import client, { apiErrorMessage } from "@/api/client";
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -16,9 +16,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SemesterBadge, useSemester } from "@/components/timetable/WeeklyTimetable.jsx";
 import { cn } from "@/lib/utils";
 import CourseCatalogue from "./CourseCatalogue.jsx";
+import BatchWeek from "./BatchWeek.jsx";
+import { BatchList, RoomList } from "./TimetableLists.jsx";
+import TimetableUpload from "@/components/timetable/TimetableUpload.jsx";
 import { useAuth } from "@/context/AuthContext.jsx";
 
-const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const DAYS = ["Sat", "Sun", "Mon", "Tue", "Wed", "Thu", "Fri"];
+const NONE = "__none";
 
 const emptyForm = {
   id: null,
@@ -58,6 +62,11 @@ export default function Timetable() {
   const [loading, setLoading] = useState(true);
   const [toDelete, setToDelete] = useState(null);
   const [tab, setTab] = useState("sessions");
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [batches, setBatches] = useState([]);
+  const [rooms, setRooms] = useState([]);
+  const [courseNames, setCourseNames] = useState([]);
+  const [listsLoading, setListsLoading] = useState(true);
   const semester = useSemester();
 
   function load() {
@@ -69,6 +78,20 @@ export default function Timetable() {
       })
       .catch((err) => setError(apiErrorMessage(err)))
       .finally(() => setLoading(false));
+    loadLists();
+  }
+
+  // The lists the class form picks from: batches, rooms and course names.
+  function loadLists() {
+    setListsLoading(true);
+    Promise.all([client.get("/admin/batches"), client.get("/admin/rooms"), client.get("/admin/course-catalogue")])
+      .then(([b, r, c]) => {
+        setBatches(b.data);
+        setRooms(r.data);
+        setCourseNames([...new Set(c.data.map((x) => x.name))].sort());
+      })
+      .catch((err) => setError(apiErrorMessage(err)))
+      .finally(() => setListsLoading(false));
   }
 
   useEffect(load, []);
@@ -101,7 +124,7 @@ export default function Timetable() {
   function openEdit(entry) {
     setForm({
       id: entry.id,
-      lecturer_id: String(entry.lecturer_id),
+      lecturer_id: entry.lecturer_id ? String(entry.lecturer_id) : "",
       course_name: entry.course_name,
       batch: entry.batch || "",
       room: entry.room || "",
@@ -118,13 +141,9 @@ export default function Timetable() {
 
   async function handleSubmit(e) {
     e.preventDefault();
-    if (!form.lecturer_id) {
-      setFormError("Please select a lecturer.");
-      return;
-    }
     setFormError("");
     setSaving(true);
-    const payload = { ...form, lecturer_id: Number(form.lecturer_id) };
+    const payload = { ...form, lecturer_id: form.lecturer_id ? Number(form.lecturer_id) : null };
     try {
       if (form.id) {
         await client.put(`/admin/timetable/${form.id}`, payload);
@@ -159,7 +178,8 @@ export default function Timetable() {
         header: ({ column }) => <DataTableColumnHeader column={column} title="Lecturer" />,
         meta: { label: "Lecturer" },
         filterFn: "equalsString",
-        cell: ({ getValue }) => <span className="font-medium">{getValue()}</span>,
+        cell: ({ getValue }) =>
+          getValue() ? <span className="font-medium">{getValue()}</span> : <Badge variant="warning">Not assigned</Badge>,
       },
       {
         accessorKey: "course_name",
@@ -252,6 +272,11 @@ export default function Timetable() {
         actions={
           <>
             <SemesterBadge name={semester?.semester_name} />
+            {can("timetable:add") && can("timetable:edit") && can("timetable:delete") && (
+              <Button variant="outline" onClick={() => setUploadOpen(true)}>
+                <FileSpreadsheet /> Upload Excel
+              </Button>
+            )}
             {can("timetable:add") && tab === "sessions" && (
               <Button onClick={openAdd}>
                 <Plus /> Add class
@@ -264,12 +289,30 @@ export default function Timetable() {
       {error && <Alert>{error}</Alert>}
 
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList>
+        <TabsList className="h-auto flex-wrap">
           <TabsTrigger value="sessions">Weekly timetable</TabsTrigger>
+          <TabsTrigger value="batch">By batch</TabsTrigger>
           <TabsTrigger value="courses">Courses & lecturers</TabsTrigger>
+          <TabsTrigger value="batches">Batches</TabsTrigger>
+          <TabsTrigger value="rooms">Rooms</TabsTrigger>
         </TabsList>
+        <TabsContent value="batch">
+          <BatchWeek batches={batches} />
+        </TabsContent>
         <TabsContent value="courses">
-          <CourseCatalogue lecturers={lecturers} semesterName={semester?.semester_name} onAddSessions={openAddFromCourse} />
+          <CourseCatalogue
+            key={entries.length}
+            lecturers={lecturers}
+            batches={batches}
+            semesterName={semester?.semester_name}
+            onAddSessions={openAddFromCourse}
+          />
+        </TabsContent>
+        <TabsContent value="batches">
+          <BatchList rows={batches} loading={listsLoading} onChanged={load} />
+        </TabsContent>
+        <TabsContent value="rooms">
+          <RoomList rows={rooms} loading={listsLoading} onChanged={load} />
         </TabsContent>
         <TabsContent value="sessions">
           <DataTable
@@ -298,11 +341,12 @@ export default function Timetable() {
 
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Lecturer">
-                <Select value={form.lecturer_id} onValueChange={(v) => set({ lecturer_id: v })}>
+                <Select value={form.lecturer_id || NONE} onValueChange={(v) => set({ lecturer_id: v === NONE ? "" : v })}>
                   <SelectTrigger>
                     <SelectValue placeholder="Select lecturer" />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value={NONE}>Not assigned yet</SelectItem>
                     {lecturers.map((l) => (
                       <SelectItem key={l.id} value={String(l.id)}>
                         {l.name}
@@ -311,14 +355,43 @@ export default function Timetable() {
                   </SelectContent>
                 </Select>
               </Field>
-              <Field label="Course">
-                <Input required value={form.course_name} onChange={(e) => set({ course_name: e.target.value })} />
+              <Field label="Course" hint={courseNames.length ? "Pick from Courses & lecturers or type a new one." : undefined}>
+                <Input required list="tt-course-names" value={form.course_name} onChange={(e) => set({ course_name: e.target.value })} />
+                <datalist id="tt-course-names">
+                  {courseNames.map((n) => (
+                    <option key={n} value={n} />
+                  ))}
+                </datalist>
               </Field>
-              <Field label="Batch / class (e.g. BCE08)">
-                <Input value={form.batch} onChange={(e) => set({ batch: e.target.value })} />
+              <Field label="Batch / class" hint={batches.length ? undefined : "Add batches in the Batches tab first."}>
+                <Select value={form.batch || NONE} onValueChange={(v) => set({ batch: v === NONE ? "" : v })}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select batch" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={NONE}>No batch</SelectItem>
+                    {[...batches.map((b) => b.code), ...(form.batch && !batches.some((b) => b.code === form.batch) ? [form.batch] : [])].map((code) => (
+                      <SelectItem key={code} value={code}>
+                        {code}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </Field>
-              <Field label="Room">
-                <Input value={form.room} onChange={(e) => set({ room: e.target.value })} />
+              <Field label="Room" hint={rooms.length ? undefined : "Add rooms in the Rooms tab first."}>
+                <Select value={form.room || NONE} onValueChange={(v) => set({ room: v === NONE ? "" : v })}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select room" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={NONE}>No room</SelectItem>
+                    {[...rooms.map((r) => r.name), ...(form.room && !rooms.some((r) => r.name === form.room) ? [form.room] : [])].map((name) => (
+                      <SelectItem key={name} value={name}>
+                        {name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </Field>
               <Field label="Start time">
                 <Input type="time" required value={form.start_time} onChange={(e) => set({ start_time: e.target.value })} />
@@ -385,11 +458,13 @@ export default function Timetable() {
         </DialogContent>
       </Dialog>
 
+      <TimetableUpload open={uploadOpen} onOpenChange={setUploadOpen} onDone={load} />
+
       <ConfirmDialog
         open={!!toDelete}
         onOpenChange={(o) => !o && setToDelete(null)}
         title="Delete this class?"
-        description={toDelete ? `${toDelete.course_name} (${toDelete.lecturer_name}) will be removed from the timetable.` : ""}
+        description={toDelete ? `${toDelete.course_name} (${toDelete.lecturer_name || "not assigned"}) will be removed from the timetable.` : ""}
         confirmLabel="Delete"
         onConfirm={() => handleDelete(toDelete)}
       />

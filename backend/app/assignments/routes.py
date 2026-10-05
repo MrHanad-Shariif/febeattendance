@@ -14,6 +14,7 @@ from app.models import (
     Assignment, AssignmentExtension, AssignmentSubmission, Course, SubmissionFile, Timetable, User, utcnow,
 )
 from app.utils.authz import current_user, roles_required
+from app.utils.batches import batch_filter, batch_matches, members
 from app.utils.notify import notify, subject_for
 from app.utils.permissions import require
 from app.utils.uploads import delete_document, save_any_file, send_download
@@ -57,11 +58,12 @@ def _require_owner(user: User, assignment: Assignment):
 
 
 def _require_student_of(user: User, assignment: Assignment):
-    require(user.role == "student" and user.batch == assignment.batch, "This assignment is for another class.")
+    require(user.role == "student" and batch_matches(assignment.batch, user.batch), "This assignment is for another class.")
 
 
 def _batch_students(batch: str) -> list[User]:
-    return User.query.filter(User.role == "student", User.batch == batch, User.status == "active").order_by(User.name).all()
+    return (User.query.filter(User.role == "student", User.batch.in_(members(batch) or [batch]), User.status == "active")
+            .order_by(User.name).all())
 
 
 def _student_view(assignment: Assignment, student: User) -> dict:
@@ -96,7 +98,8 @@ def list_assignments():
     if user.role == "student":
         if not user.batch:
             return jsonify([])
-        rows = Assignment.query.filter_by(batch=user.batch).order_by(Assignment.deadline.desc()).all()
+        rows = (Assignment.query.filter(batch_filter(Assignment.batch, user.batch))
+                .order_by(Assignment.deadline.desc()).all())
         return jsonify([_student_view(a, user) for a in rows])
     rows = Assignment.query.filter_by(lecturer_id=user.id).order_by(Assignment.deadline.desc()).all()
     out = []
@@ -259,7 +262,9 @@ def grant_extension(assignment_id):
     _require_owner(user, assignment)
     data = request.get_json(silent=True) or {}
     student_id = clean_int(data.get("student_id"), "Student", minimum=1)
-    student = User.query.filter_by(id=student_id, role="student", batch=assignment.batch).first() if student_id else None
+    student = User.query.filter_by(id=student_id, role="student").first() if student_id else None
+    if student and not batch_matches(assignment.batch, student.batch):
+        student = None
     if not student:
         raise ValidationError("Choose a student from this class")
     deadline = parse_deadline(data.get("deadline"))

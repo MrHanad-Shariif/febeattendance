@@ -142,5 +142,10 @@ def is_course_blocked(student_id: int, batch: str, course_name: str, settings: d
 
 
 def all_course_keys_for_batch(batch: str) -> list[tuple[str, str]]:
-    rows = Timetable.query.filter_by(batch=batch).with_entities(Timetable.course_name).distinct().all()
-    return [(batch, r[0]) for r in rows]
+    """(class batch, course) for every course a student of `batch` takes,
+    including classes shared with another batch ("BTE13&BEE11")."""
+    from app.utils.batches import batch_filter
+
+    rows = (Timetable.query.filter(batch_filter(Timetable.batch, batch))
+            .with_entities(Timetable.batch, Timetable.course_name).distinct().all())
+    return sorted((r[0], r[1]) for r in rows)

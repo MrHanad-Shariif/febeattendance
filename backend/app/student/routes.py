@@ -13,6 +13,7 @@ from app.utils.checkin_session import load_session_token, load_ticket, make_tick
 from app.utils.face_enrollment import enroll_student_face
 from app.utils.geo import haversine_distance_m
 from app.utils.student_code import verify_code
+from app.utils.batches import batch_filter, batch_matches
 from app.utils.schedule import get_batch_classes, scheduled_datetimes, teaches_on
 from app.utils.settings import get_all_settings, get_setting_float, get_setting_int, get_no_class_dates
 from app.utils.student_status import compute_student_checkin_status, is_course_blocked
@@ -78,7 +79,7 @@ def my_timetable():
     user = current_user()
     if not user.batch:
         return jsonify([])
-    entries = Timetable.query.filter_by(batch=user.batch).order_by(Timetable.start_time).all()
+    entries = Timetable.query.filter(batch_filter(Timetable.batch, user.batch)).order_by(Timetable.start_time).all()
     return jsonify([e.to_dict() for e in entries])
 
 
@@ -129,7 +130,7 @@ def _open_session(user, timetable_id: int, day: date, settings):
         raise CheckinRefused("This class session no longer exists.", 404)
     if day != date.today():
         raise CheckinRefused("This QR code is for a class on another day. Please scan the QR code on your lecturer's screen.")
-    if not user.batch or entry.batch != user.batch:
+    if not batch_matches(entry.batch, user.batch):
         raise CheckinRefused(
             WRONG_BATCH_MESSAGE.format(batch=entry.batch or "no batch", course=entry.course_name),
             403, reason="wrong_batch",

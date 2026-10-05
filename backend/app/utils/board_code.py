@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import func
 
+from app.utils.batches import members
 from app.models import BoardCodeAttempt, BoardSession, StudentAttendance, User
 from app.utils.schedule import scheduled_datetimes
 from app.utils.settings import get_setting_int
@@ -88,7 +89,7 @@ def live_counts(entry, day) -> dict:
         .all()
     )
     by_method = {method or "qr": count for method, count in rows}
-    enrolled = User.query.filter_by(role="student", batch=entry.batch, status="active").count() if entry.batch else 0
+    enrolled = User.query.filter(User.role == "student", User.batch.in_(members(entry.batch)), User.status == "active").count() if entry.batch else 0
     return {
         "checked_in": sum(by_method.values()),
         "board": by_method.get("board", 0),

@@ -78,7 +78,9 @@ class Timetable(db.Model):
     __tablename__ = "timetable"
 
     id = db.Column(db.Integer, primary_key=True)
-    lecturer_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    # Empty when the uploaded timetable names no instructor (or one not in
+    # the system yet): the class shows as "not assigned" until set.
+    lecturer_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
     course_name = db.Column(db.String(255), nullable=False)
     batch = db.Column(db.String(50), nullable=True)  # student batch/class code, e.g. "BCE08"
     room = db.Column(db.String(100), nullable=True)
@@ -124,6 +126,40 @@ class Timetable(db.Model):
             "semester_total_sessions": self.semester_total_sessions,
             "note": self.note,
         }
+
+
+class Batch(db.Model):
+    """A student batch / class code (e.g. "BCE08"). A class taught to two
+    batches together is written "BTE13&BEE11" (see utils/batches.py)."""
+    __tablename__ = "batches"
+
+    id = db.Column(db.Integer, primary_key=True)
+    code = db.Column(db.String(50), nullable=False, unique=True)
+    name = db.Column(db.String(150), nullable=True)
+    department = db.Column(db.String(150), nullable=True)
+    note = db.Column(db.String(500), nullable=True)
+    created_at = db.Column(db.DateTime, default=utcnow)
+
+    def to_dict(self):
+        return {"id": self.id, "code": self.code, "name": self.name, "department": self.department,
+                "note": self.note, "combined": "&" in self.code}
+
+
+class Room(db.Model):
+    """A teaching room, picked when adding a class or matched from an
+    uploaded timetable."""
+    __tablename__ = "rooms"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False, unique=True)
+    building = db.Column(db.String(150), nullable=True)
+    capacity = db.Column(db.Integer, nullable=True)
+    note = db.Column(db.String(500), nullable=True)
+    created_at = db.Column(db.DateTime, default=utcnow)
+
+    def to_dict(self):
+        return {"id": self.id, "name": self.name, "building": self.building, "capacity": self.capacity,
+                "note": self.note}
 
 
 class Course(db.Model):

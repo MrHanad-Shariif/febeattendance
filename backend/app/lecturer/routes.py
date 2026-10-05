@@ -2,6 +2,7 @@ from datetime import date, datetime, timedelta
 
 from flask import Response, jsonify, request, current_app
 
+from app.utils.batches import members
 from app.extensions import db
 from app.lecturer import lecturer_bp
 from app.models import Attendance, BoardSession, Course, Timetable, User, StudentAttendance
@@ -277,7 +278,7 @@ def my_student_course_report():
         return jsonify({"error": "You do not teach this course"}), 403
 
     settings = get_all_settings()
-    students = User.query.filter_by(role="student", batch=batch).order_by(User.name).all()
+    students = User.query.filter(User.role == "student", User.batch.in_(members(batch))).order_by(User.name).all()
     rows = []
     for student in students:
         stats = compute_course_stats(student.id, batch, course_name, settings)

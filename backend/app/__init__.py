@@ -120,6 +120,11 @@ WIDENED_COLUMNS = [
     ("notifications", "type", "VARCHAR(50)"),
 ]
 
+# NOT NULL constraints dropped after deployment: (table, column).
+NULLABLE_COLUMNS = [
+    ("timetable", "lecturer_id"),
+]
+
 # Settings whose old default was replaced: (key, old default, new value).
 # Only rows still holding the old default are changed.
 RENAMED_DEFAULTS = [
@@ -137,6 +142,9 @@ def _add_missing_columns():
         for table, column, ddl in WIDENED_COLUMNS:
             if table in tables:
                 db.session.execute(db.text(f"ALTER TABLE {table} ALTER COLUMN {column} TYPE {ddl}"))
+        for table, column in NULLABLE_COLUMNS:
+            if table in tables:
+                db.session.execute(db.text(f"ALTER TABLE {table} ALTER COLUMN {column} DROP NOT NULL"))
     db.session.commit()
 
 
@@ -167,6 +175,8 @@ def register_cli(app):
         ensure_defaults_seeded()
         _update_renamed_defaults()
         ensure_rbac_seeded()
+        from app.utils.timetable_upload import backfill_batches
+        backfill_batches()
         from app.utils.archive import backfill_meeting_agendas
         backfill_meeting_agendas()
         print("Database tables created, default settings and roles seeded.")

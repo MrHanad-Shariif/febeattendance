@@ -119,9 +119,11 @@ def mark_student_absentees(app):
             entries = get_batch_classes(batch, today, no_class_dates)
             if not entries:
                 continue
-            students = User.query.filter_by(role="student", batch=batch, status="active").all()
+            students = User.query.filter_by(role="student", batch=batch, status="active").all()  # this batch only
 
             for entry in entries:
+                if entry.lecturer_id is None:
+                    continue  # no lecturer assigned, so nobody could open check-in
                 start_dt, _ = scheduled_datetimes(entry, today)
                 if not should_mark_student_absent(start_dt, now, settings):
                     continue

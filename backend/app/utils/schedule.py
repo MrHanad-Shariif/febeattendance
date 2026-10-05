@@ -64,7 +64,9 @@ def get_batch_classes(batch: str, d: date_cls, no_class_dates: set):
     who check in once a day), so each of these is checked in to separately."""
     from app.models import Timetable
 
-    entries = Timetable.query.filter_by(batch=batch).all()
+    from app.utils.batches import batch_filter
+
+    entries = Timetable.query.filter(batch_filter(Timetable.batch, batch)).all()
     todays = [e for e in entries if e.start_time and teaches_on(e, d, no_class_dates)]
     todays.sort(key=lambda e: e.start_time)
     return todays

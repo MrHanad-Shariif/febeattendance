@@ -4,9 +4,10 @@ import bcrypt
 from flask import request, jsonify
 from flask_limiter.util import get_remote_address
 
+from app.utils.timetable_upload import student_batch_codes
 from app.auth import auth_bp
 from app.extensions import db, limiter
-from app.models import User, PasswordResetToken, Timetable
+from app.models import User, PasswordResetToken
 from app.utils.activity_log import (
     current_session_id, new_session_id, record_failed_login, record_login, record_logout, write as write_log,
 )
@@ -97,10 +98,10 @@ def logout():
 
 @auth_bp.get("/batches")
 def list_batches():
-    """Public: distinct batch codes from the timetable, for the student
-    signup form's dropdown."""
-    rows = Timetable.query.with_entities(Timetable.batch).filter(Timetable.batch.isnot(None)).distinct().all()
-    return jsonify(sorted({r[0] for r in rows if r[0]}))
+    """Public: student batch codes for the signup form's dropdown (the
+    Batches list plus any batch in the timetable; a shared class such as
+    "BTE13&BEE11" is offered as its two batches)."""
+    return jsonify(student_batch_codes())
 
 
 @auth_bp.get("/departments")
@@ -143,7 +144,7 @@ def register_student():
 
     existing = User.query.filter_by(student_id_number=student_id_number, role="student").first()
 
-    known_batches = {r[0] for r in Timetable.query.with_entities(Timetable.batch).distinct().all() if r[0]}
+    known_batches = set(student_batch_codes())
     if batch not in known_batches and not (existing and existing.batch == batch):
         raise ValidationError("Please select a valid batch")
 

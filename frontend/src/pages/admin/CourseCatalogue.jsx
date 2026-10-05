@@ -42,7 +42,7 @@ function Field({ label, hint, children }) {
  * Admin: the courses offered this semester and the lecturer assigned to each.
  * `onAddSessions(course)` opens the weekly-timetable form pre-filled from it.
  */
-export default function CourseCatalogue({ lecturers, semesterName, onAddSessions, onChanged }) {
+export default function CourseCatalogue({ lecturers, batches = [], semesterName, onAddSessions, onChanged }) {
   const { can } = useAuth();
   const canAdd = can("timetable:add");
   const canEdit = can("timetable:edit");
@@ -256,8 +256,20 @@ export default function CourseCatalogue({ lecturers, semesterName, onAddSessions
               <Field label="Course name">
                 <Input required value={form.name} maxLength={255} onChange={(e) => set({ name: e.target.value })} />
               </Field>
-              <Field label="Batch / class (e.g. BCE08)">
-                <Input value={form.batch} maxLength={50} onChange={(e) => set({ batch: e.target.value })} />
+              <Field label="Batch / class">
+                <Select value={form.batch || UNASSIGNED} onValueChange={(v) => set({ batch: v === UNASSIGNED ? "" : v })}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select batch" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={UNASSIGNED}>No batch</SelectItem>
+                    {[...batches.map((b) => b.code), ...(form.batch && !batches.some((b) => b.code === form.batch) ? [form.batch] : [])].map((code) => (
+                      <SelectItem key={code} value={code}>
+                        {code}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </Field>
               <Field label="Lecturer">
                 <Select value={form.lecturer_id || UNASSIGNED} onValueChange={(v) => set({ lecturer_id: v === UNASSIGNED ? "" : v })}>
