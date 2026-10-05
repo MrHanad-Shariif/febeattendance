@@ -1284,6 +1284,7 @@ class SpecialExamRequest(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     student_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    period_id = db.Column(db.Integer, db.ForeignKey("special_exam_periods.id", ondelete="SET NULL"), nullable=True, index=True)
     full_name = db.Column(db.String(200), nullable=False)
     batch = db.Column(db.String(50), nullable=False)
     course_name = db.Column(db.String(255), nullable=False)
@@ -1300,6 +1301,8 @@ class SpecialExamRequest(db.Model):
 
     student = db.relationship("User", foreign_keys=[student_id])
     decided_by = db.relationship("User", foreign_keys=[decided_by_id])
+    documents = db.relationship("SpecialExamDocument", back_populates="request", cascade="all, delete-orphan",
+                                order_by="SpecialExamDocument.id")
 
     def to_dict(self):
         return {
@@ -1319,4 +1322,184 @@ class SpecialExamRequest(db.Model):
             "decided_by_name": self.decided_by.name if self.decided_by else None,
             "decided_at": self.decided_at.isoformat() if self.decided_at else None,
             "created_at": self.created_at.isoformat() if self.created_at else None,
+            "documents": [d.to_dict() for d in self.documents],
+        }
+
+
+class SpecialExamDocument(db.Model):
+    """Evidence a student attaches to a special exam request (a medical
+    certificate, a letter...). Stored under uploads/private/ and served only
+    to the student and to reviewers."""
+    __tablename__ = "special_exam_documents"
+
+    id = db.Column(db.Integer, primary_key=True)
+    request_id = db.Column(db.Integer, db.ForeignKey("special_exam_requests.id", ondelete="CASCADE"), nullable=False, index=True)
+    file_name = db.Column(db.String(255), nullable=False)
+    file_path = db.Column(db.String(255), nullable=False)
+    size_bytes = db.Column(db.Integer, nullable=True)
+    uploaded_at = db.Column(db.DateTime, default=utcnow)
+
+    request = db.relationship("SpecialExamRequest", back_populates="documents")
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "file_name": self.file_name,
+            "size_bytes": self.size_bytes,
+            "url": f"/api/special-exams/{self.request_id}/documents/{self.id}",
+            "uploaded_at": self.uploaded_at.isoformat() if self.uploaded_at else None,
+        }
+
+
+class SpecialExamPeriod(db.Model):
+    """A registration window for special exams. Registration is closed
+    unless the current time falls inside a period the Administration Team
+    has set (start and end date-time)."""
+    __tablename__ = "special_exam_periods"
+
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(200), nullable=True)
+    opens_at = db.Column(db.DateTime, nullable=False)
+    closes_at = db.Column(db.DateTime, nullable=False)
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+
+    def status(self, now=None) -> str:
+        now = now or utcnow()
+        if now < self.opens_at:
+            return "upcoming"
+        return "open" if now <= self.closes_at else "closed"
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "title": self.title,
+            "opens_at": self.opens_at.isoformat(),
+            "closes_at": self.closes_at.isoformat(),
+            "status": self.status(),
+            "is_open": self.status() == "open",
+            "request_count": SpecialExamRequest.query.filter_by(period_id=self.id).count(),
+        }
+
+
+# ---------- Course completion report ----------
+
+class CompletionPeriod(db.Model):
+    """The window in which lecturers submit the course completion report
+    for one semester. One per semester; the admin sets its start and
+    deadline, and after the deadline submissions close by themselves."""
+    __tablename__ = "completion_periods"
+
+    id = db.Column(db.Integer, primary_key=True)
+    semester = db.Column(db.String(100), nullable=False, unique=True)
+    opens_at = db.Column(db.DateTime, nullable=False)
+    closes_at = db.Column(db.DateTime, nullable=False)
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+
+    reopenings = db.relationship("CompletionReopen", back_populates="period", cascade="all, delete-orphan")
+    reports = db.relationship("CourseCompletionReport", back_populates="period", cascade="all, delete-orphan")
+
+    def status(self, now=None) -> str:
+        now = now or utcnow()
+        if now < self.opens_at:
+            return "upcoming"
+        return "open" if now <= self.closes_at else "closed"
+
+    def reopened_until(self, lecturer_id: int):
+        row = next((r for r in self.reopenings if r.lecturer_id == lecturer_id), None)
+        return row.until if row else None
+
+    def deadline_for(self, lecturer_id: int):
+        """The later of the period's deadline and the lecturer's reopening."""
+        until = self.reopened_until(lecturer_id)
+        return max(self.closes_at, until) if until else self.closes_at
+
+    def is_open_for(self, lecturer_id: int, now=None) -> bool:
+        now = now or utcnow()
+        if self.opens_at <= now <= self.closes_at:
+            return True
+        until = self.reopened_until(lecturer_id)
+        return bool(until and now <= until)
+
+    def to_dict(self):
+        now = utcnow()
+        return {
+            "id": self.id,
+            "semester": self.semester,
+            "opens_at": self.opens_at.isoformat(),
+            "closes_at": self.closes_at.isoformat(),
+            "status": self.status(now),
+            "report_count": len(self.reports),
+            "reopenings": [r.to_dict(now) for r in sorted(self.reopenings, key=lambda r: r.lecturer.name if r.lecturer else "")],
+        }
+
+
+class CompletionReopen(db.Model):
+    """The admin reopened a closed period for one lecturer until `until`."""
+    __tablename__ = "completion_reopenings"
+
+    id = db.Column(db.Integer, primary_key=True)
+    period_id = db.Column(db.Integer, db.ForeignKey("completion_periods.id", ondelete="CASCADE"), nullable=False, index=True)
+    lecturer_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    until = db.Column(db.DateTime, nullable=False)
+    granted_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    granted_at = db.Column(db.DateTime, default=utcnow)
+
+    period = db.relationship("CompletionPeriod", back_populates="reopenings")
+    lecturer = db.relationship("User", foreign_keys=[lecturer_id])
+
+    __table_args__ = (db.UniqueConstraint("period_id", "lecturer_id", name="uq_completion_reopen"),)
+
+    def to_dict(self, now=None):
+        now = now or utcnow()
+        return {
+            "lecturer_id": self.lecturer_id,
+            "lecturer_name": self.lecturer.name if self.lecturer else None,
+            "until": self.until.isoformat(),
+            "active": now <= self.until,
+        }
+
+
+class CourseCompletionReport(db.Model):
+    """One lecturer's completion figures for one course taught to one class.
+    Semester, class, lecturer and course names are kept as text so past
+    semesters still read correctly after the catalogue changes."""
+    __tablename__ = "course_completion_reports"
+
+    id = db.Column(db.Integer, primary_key=True)
+    period_id = db.Column(db.Integer, db.ForeignKey("completion_periods.id", ondelete="CASCADE"), nullable=False, index=True)
+    semester = db.Column(db.String(100), nullable=False, index=True)
+    class_name = db.Column(db.String(50), nullable=False, index=True)
+    lecturer_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    lecturer_name = db.Column(db.String(200), nullable=False)
+    course_name = db.Column(db.String(255), nullable=False)
+    covered_chapters = db.Column(db.Integer, nullable=False)
+    planned_chapters = db.Column(db.Integer, nullable=False)
+    completion_percent = db.Column(db.Float, nullable=False)
+    submitted_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow)
+
+    period = db.relationship("CompletionPeriod", back_populates="reports")
+
+    __table_args__ = (
+        db.UniqueConstraint("period_id", "class_name", "course_name", "lecturer_id", name="uq_completion_report"),
+    )
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "period_id": self.period_id,
+            "semester": self.semester,
+            "class_name": self.class_name,
+            "lecturer_id": self.lecturer_id,
+            "lecturer_name": self.lecturer_name,
+            "course_name": self.course_name,
+            "covered_chapters": self.covered_chapters,
+            "planned_chapters": self.planned_chapters,
+            "completion_percent": self.completion_percent,
+            "submitted_at": self.submitted_at.isoformat() if self.submitted_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

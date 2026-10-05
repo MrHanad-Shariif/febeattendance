@@ -6,6 +6,7 @@ import {
   BookOpen,
   Building2,
   ClipboardList,
+  ClipboardPen,
   FileText,
   Gauge,
   ListChecks,
@@ -53,6 +54,7 @@ export const NAV_BY_ROLE = {
       children: [
         { label: "My timetable", icon: CalendarDays, to: "/my-timetable" },
         { label: "Assignments", icon: NotebookPen, to: "/assignments" },
+        { label: "Course completion", icon: ClipboardPen, to: "/course-completion" },
         { label: "My students", icon: GraduationCap, to: "/my-students" },
         { label: "Class check-in (QR & board)", icon: KeyRound, to: "/class-code" },
       ],
@@ -78,6 +80,7 @@ const MANAGEMENT = [
       { label: "Today's attendance", icon: ClipboardCheck, to: "/admin/overview", perms: ["lecturer_attendance:view"] },
       { label: "Manage lecturers", icon: UserCheck, to: "/admin/lecturers", perms: ["lecturers:view"] },
       { label: "Timetable", icon: CalendarClock, to: "/admin/timetable", perms: ["timetable:view"] },
+      { label: "Course completion", icon: ClipboardPen, to: "/admin/course-completion", perms: ["course_completion:view"] },
     ],
   },
   {
@@ -109,6 +112,10 @@ export function reportLinks(user) {
     can("reports:view") && {
       label: "Check-in methods", icon: ScanLine, to: "/admin/checkin-methods",
       description: "QR versus board-code check-ins per class session, to spot suspicious board-code attendance.",
+    },
+    can("course_completion:view") && {
+      label: "Course completion", icon: ClipboardPen, to: "/admin/course-completion",
+      description: "Chapters covered against planned per course, class and lecturer, with Excel downloads.",
     },
     committeeReports && {
       label: "Committee reports", icon: Network, to: "/committee-reports",

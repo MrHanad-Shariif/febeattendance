@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
-import { Check, FileSpreadsheet, X } from "lucide-react";
+import { Check, FileSpreadsheet, Paperclip, X } from "lucide-react";
 import { toast } from "sonner";
 import client, { apiErrorMessage } from "@/api/client";
-import { Field, OptionSelect, useApi } from "@/components/committees/shared";
+import { DocumentActions, Field, OptionSelect, useApi } from "@/components/committees/shared";
 import { DataTable, DataTableColumnHeader } from "@/components/data-table";
 import { Alert, PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/context/AuthContext.jsx";
 import { downloadFromApi, formatDateTime } from "@/lib/committees";
+import RegistrationPeriod from "./RegistrationPeriod";
 import { RequestStatusBadge, STATUS_OPTIONS, formatDay } from "./shared";
 
 const EXPORT_OPTIONS = [{ value: "all", label: "All requests" }, ...STATUS_OPTIONS.map((o) => ({ ...o, label: `${o.label} only` }))];
@@ -63,6 +64,16 @@ function ReviewDialog({ request, canDecide, onClose, onDecided }) {
             <Detail label="Reason">
               <span className="whitespace-pre-line">{request.reason}</span>
             </Detail>
+          </div>
+          <div className="col-span-2">
+            <dt className="text-xs text-muted-foreground">Supporting documents</dt>
+            <dd className="space-y-1.5 pt-1">
+              {request.documents?.length ? (
+                request.documents.map((d) => <DocumentActions key={d.id} url={d.url} fileName={d.file_name} />)
+              ) : (
+                <span className="text-sm text-muted-foreground">None attached</span>
+              )}
+            </dd>
           </div>
           <div className="col-span-2 flex flex-wrap items-center gap-2 text-sm">
             <RequestStatusBadge status={request.status} />
@@ -183,6 +194,20 @@ export default function SpecialExamReview() {
       },
       { accessorKey: "phone", header: "Phone", meta: { label: "Phone" } },
       {
+        id: "documents",
+        accessorFn: (r) => r.documents?.length || 0,
+        header: "Documents",
+        meta: { label: "Documents" },
+        cell: ({ getValue }) =>
+          getValue() ? (
+            <span className="inline-flex items-center gap-1 text-sm">
+              <Paperclip className="h-3.5 w-3.5 text-muted-foreground" /> {getValue()}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">—</span>
+          ),
+      },
+      {
         accessorKey: "status",
         header: ({ column }) => <DataTableColumnHeader column={column} title="Status" />,
         meta: { label: "Status" },
@@ -221,6 +246,7 @@ export default function SpecialExamReview() {
           </>
         }
       />
+      <RegistrationPeriod canEdit={canDecide} />
       {error && <Alert>{error}</Alert>}
       <DataTable
         columns={columns}

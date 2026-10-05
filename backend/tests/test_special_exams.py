@@ -1,14 +1,29 @@
-"""Special exam registration: student submits, Administration Team decides,
+"""Special exam registration: student submits (only inside the registration
+period, optionally with evidence documents), Administration Team decides,
 student is notified and emailed, staff export Excel."""
 import io
-from datetime import date, time, timedelta
+from datetime import date, datetime, time, timedelta
 
 import pytest
 from openpyxl import load_workbook
 
 from app.extensions import db
-from app.models import EmailOutbox, FacultyRole, Notification, SpecialExamRequest, Timetable
+from app.models import EmailOutbox, FacultyRole, Notification, SpecialExamPeriod, SpecialExamRequest, Timetable
 from tests.conftest import auth_header, make_user
+
+PDF = b"%PDF-1.4\n%test\n"
+
+
+@pytest.fixture(autouse=True)
+def registration_open(app, request):
+    """Registration is closed by default; most tests run inside an open period."""
+    if "closed_registration" in request.keywords:
+        return None
+    now = datetime.now()
+    period = SpecialExamPeriod(opens_at=now - timedelta(days=1), closes_at=now + timedelta(days=2))
+    db.session.add(period)
+    db.session.commit()
+    return period
 
 
 @pytest.fixture()
@@ -124,10 +139,103 @@ def test_excel_export_with_status_filter(client, student, timetable, admin_team)
     assert res.status_code == 200
     ws = load_workbook(io.BytesIO(res.data)).active
     assert ws["A1"].value == "No." and ws.max_row == 3
-    statuses = {ws.cell(row=r, column=12).value for r in (2, 3)}
+    statuses = {ws.cell(row=r, column=13).value for r in (2, 3)}
     assert statuses == {"Approved", "Pending"}
     assert all(not str(ws.cell(row=r, column=11).value).startswith("=") for r in (2, 3))
 
     approved = client.get("/api/special-exams/export.xlsx?status=approved", headers=auth_header(admin_team))
     assert load_workbook(io.BytesIO(approved.data)).active.max_row == 2
     assert SpecialExamRequest.query.count() == 2
+
+
+# ---------- Registration period ----------
+
+@pytest.mark.closed_registration
+def test_registration_closed_without_a_period(client, student, timetable):
+    res = submit(client, student)
+    assert res.status_code == 403 and "closed" in res.get_json()["error"]
+    assert client.get("/api/special-exams/options", headers=auth_header(student)).get_json()["period"] is None
+
+
+@pytest.mark.closed_registration
+def test_period_controls_registration(client, student, timetable, admin_team):
+    now = datetime.now()
+    fmt = "%Y-%m-%dT%H:%M"
+    # Upcoming: still closed.
+    res = client.post("/api/special-exams/period", headers=auth_header(admin_team), json={
+        "title": "Midterm", "opens_at": (now + timedelta(days=1)).strftime(fmt),
+        "closes_at": (now + timedelta(days=3)).strftime(fmt),
+    })
+    assert res.status_code == 201 and res.get_json()["status"] == "upcoming"
+    period_id = res.get_json()["id"]
+    assert submit(client, student).status_code == 403
+    options = client.get("/api/special-exams/options", headers=auth_header(student)).get_json()
+    assert options["period"]["status"] == "upcoming"
+
+    # Moved to start now: open.
+    res = client.put(f"/api/special-exams/period/{period_id}", headers=auth_header(admin_team), json={
+        "title": "Midterm", "opens_at": (now - timedelta(minutes=5)).strftime(fmt),
+        "closes_at": (now + timedelta(days=3)).strftime(fmt),
+    })
+    assert res.get_json()["is_open"]
+    created = submit(client, student)
+    assert created.status_code == 201 and SpecialExamRequest.query.one().period_id == period_id
+
+    # Closed early: registration stops.
+    assert client.post(f"/api/special-exams/period/{period_id}/close",
+                       headers=auth_header(admin_team)).get_json()["status"] == "closed"
+    assert submit(client, student, exam_date=date.today().isoformat()).status_code == 403
+
+
+@pytest.mark.closed_registration
+def test_period_validation_and_access(client, student, lecturer, admin_team):
+    now = datetime.now()
+    body = {"opens_at": now.strftime("%Y-%m-%dT%H:%M"), "closes_at": (now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M")}
+    assert client.post("/api/special-exams/period", headers=auth_header(admin_team), json=body).status_code == 400
+    assert client.post("/api/special-exams/period", headers=auth_header(admin_team), json={}).status_code == 400
+    ok = {"opens_at": now.date().isoformat(), "closes_at": (now.date() + timedelta(days=2)).isoformat()}
+    assert client.post("/api/special-exams/period", headers=auth_header(lecturer), json=ok).status_code == 403
+    assert client.post("/api/special-exams/period", headers=auth_header(student), json=ok).status_code == 403
+    assert client.post("/api/special-exams/period", headers=auth_header(admin_team), json=ok).status_code == 201
+    # Overlapping periods are refused.
+    assert client.post("/api/special-exams/period", headers=auth_header(admin_team), json=ok).status_code == 409
+    current = client.get("/api/special-exams/period", headers=auth_header(admin_team)).get_json()["current"]
+    assert current["is_open"]
+
+
+# ---------- Evidence documents ----------
+
+def submit_with_files(client, student, files, **overrides):
+    data = valid(**overrides)
+    data["documents"] = files
+    return client.post("/api/special-exams", headers=auth_header(student), data=data,
+                       content_type="multipart/form-data")
+
+
+def test_documents_are_attached_and_protected(client, student, timetable, admin_team, lecturer):
+    res = submit_with_files(client, student, [(io.BytesIO(PDF), "medical.pdf"),
+                                              (io.BytesIO(b"\x89PNG\r\n\x1a\nxxxx"), "letter.png")])
+    assert res.status_code == 201, res.get_json()
+    body = res.get_json()
+    assert [d["file_name"] for d in body["documents"]] == ["medical.pdf", "letter.png"]
+    url = body["documents"][0]["url"].removeprefix("/api")
+
+    assert client.get(f"/api{url}", headers=auth_header(student)).data == PDF
+    assert client.get(f"/api{url}", headers=auth_header(admin_team)).status_code == 200
+    assert client.get(f"/api{url}", headers=auth_header(lecturer)).status_code == 403
+    other = make_user("other@example.com", role="student", batch="BCE08")
+    assert client.get(f"/api{url}", headers=auth_header(other)).status_code == 403
+
+    ws = load_workbook(io.BytesIO(client.get("/api/special-exams/export.xlsx", headers=auth_header(admin_team)).data)).active
+    assert ws.cell(row=1, column=12).value == "Documents"
+    assert "medical.pdf" in ws.cell(row=2, column=12).value
+
+
+def test_documents_are_optional_and_validated(client, student, timetable):
+    assert submit_with_files(client, student, []).status_code == 201
+    bad = submit_with_files(client, student, [(io.BytesIO(b"MZ\x90\x00evil"), "virus.exe")],
+                            exam_date=date.today().isoformat())
+    assert bad.status_code == 400 and "virus.exe" in bad.get_json()["error"]
+    many = [(io.BytesIO(PDF), f"f{i}.pdf") for i in range(6)]
+    assert submit_with_files(client, student, many, exam_date=date.today().isoformat()).status_code == 400
+    assert SpecialExamRequest.query.count() == 1

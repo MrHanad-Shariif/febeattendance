@@ -25,6 +25,9 @@ import { StudentAssignmentDetail, StudentAssignmentList } from "./pages/assignme
 // Special exam registration (students apply, the Administration Team decides)
 import StudentSpecialExams from "./pages/special-exams/StudentSpecialExams.jsx";
 import SpecialExamReview from "./pages/special-exams/SpecialExamReview.jsx";
+// Course completion report (lecturers submit per course, admin opens the period and downloads)
+import LecturerCompletion from "./pages/course-completion/LecturerCompletion.jsx";
+import AdminCompletion from "./pages/course-completion/AdminCompletion.jsx";
 
 // Committee archive: memos, meeting agendas and reports
 import Archive from "./pages/archive/Archive.jsx";
@@ -149,6 +152,7 @@ export default function App() {
         <Route path="/history" element={guard(["lecturer"], <History />)} />
         <Route path="/my-students" element={guard(["lecturer"], <LecturerStudentAttendance />)} />
         <Route path="/my-timetable" element={guard(["lecturer"], <LecturerTimetable />)} />
+        <Route path="/course-completion" element={guard(["lecturer"], <LecturerCompletion />)} />
         <Route
           path="/assignments"
           element={guard(["lecturer", "student"], <ByRole lecturer={<LecturerAssignments />} student={<StudentAssignmentList />} />)}
@@ -181,6 +185,7 @@ export default function App() {
         <Route path="/reports" element={guard(STAFF, <AllReports />)} />
         {/* Administration Team or special_exams:view; the API checks too */}
         <Route path="/admin/special-exams" element={guard(STAFF, <SpecialExamReview />)} />
+        <Route path="/admin/course-completion" element={allow(["course_completion:view"], <AdminCompletion />)} />
 
         {/* Authentication: users, roles, permissions */}
         <Route path="/access/users" element={allow(["users:view"], <Users />)} />

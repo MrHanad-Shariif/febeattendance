@@ -119,6 +119,24 @@ ACTIONS = {
     "assignments.remove_submission_file": ("Assignments", "Removed a submitted file"),
     "assignments.download_brief": ("Assignments", "Downloaded an assignment brief"),
     "assignments.download_submission_file": ("Assignments", "Downloaded a submitted file"),
+
+    # Special exams
+    "special_exams.create_request": ("Special exams", "Registered for a special exam"),
+    "special_exams.decide": ("Special exams", "Decided a special exam request"),
+    "special_exams.download_document": ("Special exams", "Downloaded a special exam document"),
+    "special_exams.export_excel": ("Special exams", "Exported special exam requests"),
+    "special_exams.create_period": ("Special exams", "Opened special exam registration"),
+    "special_exams.update_period": ("Special exams", "Changed the special exam registration period"),
+    "special_exams.close_period": ("Special exams", "Closed special exam registration"),
+
+    # Course completion report
+    "course_completion.save_report": ("Course completion", "Saved a course completion report"),
+    "course_completion.create_period": ("Course completion", "Opened the course completion report"),
+    "course_completion.update_period": ("Course completion", "Changed the course completion dates"),
+    "course_completion.close_period": ("Course completion", "Closed the course completion report"),
+    "course_completion.reopen": ("Course completion", "Reopened the course completion report for lecturers"),
+    "course_completion.revoke_reopen": ("Course completion", "Withdrew a lecturer's reopening"),
+    "course_completion.export_excel": ("Course completion", "Exported the course completion report"),
 }
 
 MUTATING = {"POST", "PUT", "PATCH", "DELETE"}

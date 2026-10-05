@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatTime } from "@/lib/utils";
+import { CompletionReminder } from "@/pages/course-completion/LecturerCompletion.jsx";
 
 function TimeTile({ icon: Icon, label, value }) {
   return (
@@ -80,6 +81,7 @@ export default function Dashboard() {
     return (
       <div className="space-y-6">
         <PageHeader title="Today" />
+        <CompletionReminder />
         <Card>
           <CardContent className="flex flex-col items-center gap-3 py-16 text-center">
             <CalendarOff className="h-10 w-10 text-muted-foreground/60" />
@@ -106,6 +108,7 @@ export default function Dashboard() {
             : "Enter the campus code from the kiosk screen and allow location access to check in or out."
         }
       />
+      <CompletionReminder />
 
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
         <Card>

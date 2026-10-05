@@ -41,6 +41,7 @@ def create_app(config_class=Config):
     from app.archive import archive_bp
     from app.assignments import assignments_bp
     from app.special_exams import special_exams_bp
+    from app.course_completion import course_completion_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(admin_bp)
@@ -60,6 +61,7 @@ def create_app(config_class=Config):
     app.register_blueprint(archive_bp)
     app.register_blueprint(assignments_bp)
     app.register_blueprint(special_exams_bp)
+    app.register_blueprint(course_completion_bp)
 
     @app.get("/api/health")
     def health():
@@ -109,6 +111,7 @@ NEW_COLUMNS = [
     ("tasks", "report_outcomes", "TEXT"),
     ("tasks", "report_challenges", "TEXT"),
     ("tasks", "report_recommendations", "TEXT"),
+    ("special_exam_requests", "period_id", "INTEGER REFERENCES special_exam_periods(id) ON DELETE SET NULL"),
 ]
 
 # Settings whose old default was replaced: (key, old default, new value).

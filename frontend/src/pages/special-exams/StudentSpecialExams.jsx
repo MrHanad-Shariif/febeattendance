@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CalendarX2, CheckCircle2, Send, XCircle } from "lucide-react";
+import { CalendarClock, CalendarX2, CheckCircle2, Lock, Send, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import client, { apiErrorMessage } from "@/api/client";
 import { Field, OptionSelect, useApi } from "@/components/committees/shared";
@@ -10,7 +10,12 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDateTime } from "@/lib/committees";
-import { RequestStatusBadge, formatDay, todayIso } from "./shared";
+import { FileRow, formatBytes } from "@/pages/assignments/shared";
+import { PeriodBadge, RequestStatusBadge, formatDay, todayIso } from "./shared";
+
+const MAX_DOCUMENTS = 5;
+const MAX_TOTAL_BYTES = 14 * 1024 * 1024; // the server takes 15 MB per request, form fields included
+const DOCUMENT_TYPES = ".pdf,.doc,.docx,.xlsx,.pptx,.png,.jpg,.jpeg";
 
 const SHIFT_OPTIONS = [
   { value: "1", label: "Shift 1" },
@@ -19,9 +24,26 @@ const SHIFT_OPTIONS = [
 
 const EMPTY = { full_name: "", batch: "", course_name: "", reason: "", exam_date: "", shift: "", phone: "", id_number: "" };
 
+/** Registration is only possible inside the period the Administration Team sets. */
+function ClosedNotice({ period }) {
+  const upcoming = period?.status === "upcoming";
+  return (
+    <Card className="flex flex-col items-center gap-3 p-10 text-center">
+      {upcoming ? <CalendarClock className="h-10 w-10 text-info" /> : <Lock className="h-10 w-10 text-muted-foreground/60" />}
+      <p className="font-medium">{upcoming ? "Special exam registration opens soon" : "Special exam registration is closed"}</p>
+      <p className="max-w-md text-sm text-muted-foreground">
+        {upcoming
+          ? `You can register from ${formatDateTime(period.opens_at)} until ${formatDateTime(period.closes_at)}.`
+          : "The Administration Team opens registration for a set period after exams. Check back then."}
+      </p>
+    </Card>
+  );
+}
+
 function RequestForm({ onCreated }) {
   const { data: options, loading } = useApi("/special-exams/options", null);
   const [form, setForm] = useState(EMPTY);
+  const [documents, setDocuments] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -35,6 +57,20 @@ function RequestForm({ onCreated }) {
   const set = (key) => (value) => setForm((f) => ({ ...f, [key]: value }));
   const batches = Object.keys(options?.batches || {});
   const courses = (options?.batches || {})[form.batch] || [];
+  const period = options?.period;
+
+  function pickDocuments(e) {
+    const chosen = Array.from(e.target.files || []);
+    const all = [...documents, ...chosen].slice(0, MAX_DOCUMENTS);
+    if (documents.length + chosen.length > MAX_DOCUMENTS) setError(`You can attach at most ${MAX_DOCUMENTS} documents.`);
+    else if (all.reduce((n, f) => n + f.size, 0) > MAX_TOTAL_BYTES) {
+      setError("The documents together must be smaller than 14 MB.");
+      e.target.value = "";
+      return;
+    } else setError("");
+    setDocuments(all);
+    e.target.value = "";
+  }
 
   async function submit(e) {
     e.preventDefault();
@@ -46,9 +82,13 @@ function RequestForm({ onCreated }) {
     }
     setSaving(true);
     try {
-      await client.post("/special-exams", form);
+      const body = new FormData();
+      Object.entries(form).forEach(([k, v]) => body.append(k, v));
+      documents.forEach((file) => body.append("documents", file));
+      await client.post("/special-exams", body);
       toast.success("Request sent. You'll get an email when it's decided.");
       setForm((f) => ({ ...EMPTY, full_name: f.full_name, id_number: f.id_number, batch: f.batch, phone: f.phone }));
+      setDocuments([]);
       onCreated();
     } catch (err) {
       setError(apiErrorMessage(err));
@@ -58,12 +98,21 @@ function RequestForm({ onCreated }) {
   }
 
   if (loading) return <Skeleton className="h-96 w-full" />;
+  if (!period?.is_open) return <ClosedNotice period={period} />;
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="text-base">Register for a special exam</CardTitle>
-        <CardDescription>All fields are required. The Administration Team will review your request.</CardDescription>
+      <CardHeader className="flex-row flex-wrap items-start justify-between gap-3 space-y-0">
+        <div className="space-y-1.5">
+          <CardTitle className="text-base">Register for a special exam</CardTitle>
+          <CardDescription>
+            Supporting documents are optional; every other field is required. The Administration Team will review your request.
+          </CardDescription>
+        </div>
+        <div className="flex flex-col items-end gap-1 text-right">
+          <PeriodBadge period={period} />
+          <span className="text-xs text-muted-foreground">Closes {formatDateTime(period.closes_at)}</span>
+        </div>
       </CardHeader>
       <CardContent>
         <form onSubmit={submit} className="grid gap-4 sm:grid-cols-2">
@@ -109,6 +158,42 @@ function RequestForm({ onCreated }) {
               maxLength={2000}
               placeholder="Why did you miss the exam?"
             />
+          </Field>
+          <Field
+            label="Supporting documents (optional)"
+            htmlFor="se-docs"
+            className="sm:col-span-2"
+            hint={`Evidence for your reason, e.g. a medical certificate or letter. PDF, Word, Excel, PowerPoint, PNG or JPG; up to ${MAX_DOCUMENTS} files, 14 MB in total.`}
+          >
+            <Input
+              id="se-docs"
+              type="file"
+              multiple
+              accept={DOCUMENT_TYPES}
+              onChange={pickDocuments}
+              disabled={documents.length >= MAX_DOCUMENTS}
+              className="cursor-pointer file:mr-3 file:rounded file:border-0 file:bg-primary/10 file:px-2 file:py-1 file:text-primary"
+            />
+            {documents.length > 0 && (
+              <ul className="space-y-1 pt-1">
+                {documents.map((f, i) => (
+                  <li key={`${f.name}-${i}`} className="flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm">
+                    <span className="min-w-0 flex-1 truncate">{f.name}</span>
+                    <span className="shrink-0 text-xs text-muted-foreground">{formatBytes(f.size)}</span>
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7"
+                      aria-label={`Remove ${f.name}`}
+                      onClick={() => setDocuments((d) => d.filter((_, j) => j !== i))}
+                    >
+                      <XCircle />
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </Field>
           {error && (
             <div className="sm:col-span-2">
@@ -174,6 +259,13 @@ export default function StudentSpecialExams() {
                 <RequestStatusBadge status={r.status} />
               </div>
               <p className="whitespace-pre-line text-sm">{r.reason}</p>
+              {r.documents?.length > 0 && (
+                <div className="space-y-1.5">
+                  {r.documents.map((d) => (
+                    <FileRow key={d.id} file={d} />
+                  ))}
+                </div>
+              )}
               <DecisionMessage request={r} />
             </Card>
           ))

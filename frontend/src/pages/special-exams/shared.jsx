@@ -29,3 +29,14 @@ export function todayIso() {
   const now = new Date();
   return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 }
+
+export const PERIOD_META = {
+  open: { label: "Registration open", variant: "success" },
+  upcoming: { label: "Opens soon", variant: "info" },
+  closed: { label: "Registration closed", variant: "muted" },
+};
+
+export function PeriodBadge({ period }) {
+  const meta = PERIOD_META[period?.status] || PERIOD_META.closed;
+  return <Badge variant={meta.variant}>{meta.label}</Badge>;
+}

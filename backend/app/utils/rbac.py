@@ -60,6 +60,10 @@ CATALOGUE = {
         "view": "See students' special exam requests and download them as Excel",
         "edit": "Approve or decline special exam requests",
     }),
+    "course_completion": ("Course completion report", "Lecturers", {
+        "view": "See every lecturer's course completion report and download it as Excel",
+        "edit": "Open the report period, set its start date and deadline, and reopen it for lecturers",
+    }),
     "reports": ("Reports", "Reports", {
         "view": "Open every attendance report and export it",
     }),
