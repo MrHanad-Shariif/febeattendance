@@ -284,7 +284,7 @@ def list_batches():
     out = []
     for b in Batch.query.order_by(Batch.code).all():
         data = b.to_dict()
-        data["student_count"] = sum(students.get(m, 0) for m in members(b.code)) if b.combined else students.get(b.code, 0)
+        data["student_count"] = sum(students.get(m, 0) for m in members(b.code))
         data["class_count"] = classes.get(b.code, 0)
         out.append(data)
     return jsonify(out)

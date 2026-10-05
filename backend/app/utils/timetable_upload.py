@@ -18,7 +18,9 @@ deleted when the admin explicitly agrees. Missing batches, rooms and courses
 are added to their lists as part of the upload.
 """
 import datetime as dt
+import difflib
 import io
+import re
 import zipfile
 
 import openpyxl
@@ -163,25 +165,77 @@ def read_workbook(data: bytes) -> dict:
 
 # ---------- Matching and planning ----------
 
-def _resolve_lecturers(records: list[dict]) -> list[dict]:
-    """Set lecturer_id on each record; unknown names stay unassigned."""
+TITLES = {"dr", "prof", "eng", "mr", "mrs", "ms", "sh", "sheikh"}
+
+
+def _name_tokens(name: str) -> list[str]:
+    return [t for t in re.split(r"[\s.\-_,']+", name.lower()) if t and t not in TITLES]
+
+
+def _similar(a: str, b: str) -> float:
+    return difflib.SequenceMatcher(None, a, b).ratio()
+
+
+def name_score(raw: str, candidate: str) -> float:
+    """0-1: how well a name typed in the sheet fits a lecturer's name. The
+    first names must agree; the rest are matched in order, allowing spelling
+    variants ("Moallim"/"Moalim") and words run together ("Elhajj Alsufi" /
+    "Elhajalsoufi"). Titles such as "Dr." are ignored."""
+    rt, ct = _name_tokens(raw), _name_tokens(candidate)
+    if not rt or not ct or _similar(rt[0], ct[0]) < 0.75:
+        return 0.0
+    pos, sims = 0, []
+    for token in rt:
+        best, at = 0.0, None
+        for i in range(pos, len(ct)):
+            s = _similar(token, ct[i])
+            if s > best:
+                best, at = s, i
+        sims.append(best)
+        if at is not None and best >= 0.75:
+            pos = at + 1
+    joined = "".join(rt)
+    return max(sum(sims) / len(sims), _similar(joined, "".join(ct)[: len(joined) + 2]))
+
+
+def fuzzy_lecturer(raw: str, names: list[str], threshold: float = 0.82, margin: float = 0.08) -> str | None:
+    """The one lecturer clearly closest to `raw`, or None when no name is
+    close enough or two are about equally close."""
+    scored = sorted(((name_score(raw, n), n) for n in names), reverse=True)
+    if not scored or scored[0][0] < threshold:
+        return None
+    if len(scored) > 1 and scored[0][0] - scored[1][0] < margin:
+        return None
+    return scored[0][1]
+
+def _resolve_lecturers(records: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Set lecturer_id on each record; unknown names stay unassigned.
+    Returns (unknown instructors, names matched by close spelling)."""
     lecturers = User.query.filter_by(role="lecturer").all()
     by_name = {u.name: u for u in lecturers}
     names = list(by_name)
     known = {norm(n) for n in names} | set(NAME_CORRECTIONS)
     unknown: dict[str, dict] = {}
+    close: dict[str, str] = {}
     for rec in records:
         # Instructor and Subject typed in each other's column.
         if rec["lecturer"] and norm(rec["lecturer"]) not in known and norm(rec["course"]) in known:
             rec["lecturer"], rec["course"] = rec["course"], rec["lecturer"]
         canonical = resolve_lecturer_name(rec["lecturer"], names) if rec["lecturer"] else None
+        if rec["lecturer"] and not canonical:
+            canonical = fuzzy_lecturer(rec["lecturer"], names)
+            if canonical:
+                close[rec["lecturer"]] = canonical
         rec["lecturer_id"] = by_name[canonical].id if canonical else None
         rec["excel_instructor"] = rec["lecturer"]
         rec["lecturer"] = canonical or ""
         if rec["excel_instructor"] and not canonical:
             item = unknown.setdefault(norm(rec["excel_instructor"]), {"name": rec["excel_instructor"], "classes": set()})
             item["classes"].add(f"{rec['course']} ({rec['batch']})")
-    return [{"name": u["name"], "classes": sorted(u["classes"])} for u in unknown.values()]
+    return (
+        [{"name": u["name"], "classes": sorted(u["classes"])} for u in unknown.values()],
+        [{"excel": k, "lecturer": v} for k, v in sorted(close.items())],
+    )
 
 
 def _key(batch, course, lecturer_id, days, start):
@@ -190,7 +244,7 @@ def _key(batch, course, lecturer_id, days, start):
 
 def build_plan(data: bytes) -> dict:
     parsed = read_workbook(data)
-    unknown = _resolve_lecturers(parsed["records"])
+    unknown, close = _resolve_lecturers(parsed["records"])
     # Merge on the matched lecturer; keep the Excel name for unassigned rows.
     for rec in parsed["records"]:
         rec["lecturer"] = rec["lecturer"] or f"?{rec['excel_instructor']}"
@@ -223,6 +277,7 @@ def build_plan(data: bytes) -> dict:
         **parsed,
         "classes": classes,
         "unknown_instructors": unknown,
+        "close_matches": close,
         "removed": removed,
         "removed_with_history": [r for r in removed if r.id in with_history],
         "new_rooms": sorted({c["room"] for c in classes if c["room"] and c["room"] not in rooms}),
@@ -249,6 +304,7 @@ def plan_summary(plan: dict) -> dict:
         "skipped_sheets": plan["skipped_sheets"],
         "warnings": plan["warnings"],
         "unknown_instructors": plan["unknown_instructors"],
+        "close_matches": plan["close_matches"],
         "classes": [_class_view(c) for c in plan["classes"]],
         "counts": {
             "classes": len(plan["classes"]),

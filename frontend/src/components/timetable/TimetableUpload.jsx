@@ -153,6 +153,21 @@ export default function TimetableUpload({ open, onOpenChange, onDone }) {
               </div>
             )}
 
+            {preview.close_matches?.length > 0 && (
+              <details className="text-sm" open>
+                <summary className="cursor-pointer text-muted-foreground">
+                  {preview.close_matches.length} instructor name(s) matched by close spelling — please check
+                </summary>
+                <ul className="mt-1 space-y-0.5 pl-5">
+                  {preview.close_matches.map((m) => (
+                    <li key={m.excel}>
+                      {m.excel} <span className="text-muted-foreground">→</span> <span className="font-medium">{m.lecturer}</span>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+
             {preview.warnings.length > 0 && (
               <details className="text-sm">
                 <summary className="cursor-pointer text-muted-foreground">{preview.warnings.length} row(s) to check</summary>

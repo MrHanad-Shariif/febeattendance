@@ -83,6 +83,10 @@ def test_upload_builds_timetable_and_lists(client, admin, lecturers):
     assert {r.name for r in Room.query.all()} == {"301", "302"}
     assert {b.code for b in Batch.query.all()} >= {"BCE08", "BTE13&BEE11", "BTE13", "BEE11"}
     assert Course.query.filter_by(name="Water Resources Management", batch="BCE08").one().lecturer_id == lecturers[1].id
+    batches = {b["code"]: b for b in client.get("/api/admin/batches", headers=auth_header(admin)).get_json()}
+    assert batches["BTE13&BEE11"]["combined"] and batches["BCE08"]["class_count"] == 3
+    rooms = client.get("/api/admin/rooms", headers=auth_header(admin)).get_json()
+    assert {r["name"]: r["class_count"] for r in rooms} == {"301": 1, "302": 3}
     # Students sign up to single batches only.
     assert client.get("/api/auth/batches").get_json() == ["BCE08", "BEE11", "BTE13"]
 
@@ -164,3 +168,26 @@ def test_class_without_lecturer(client, admin):
     res = client.post("/api/admin/timetable", headers=auth_header(admin), json={
         "course_name": "Surveying", "batch": "BCE08", "days": ["Sat"], "start_time": "08:00", "end_time": "09:30"})
     assert res.status_code == 201 and res.get_json()["lecturer_name"] is None
+
+
+def test_close_spellings_match_lecturers(client, admin):
+    names = ["Osman Moalim Ali", "Dr.Mohammed Elhajalsoufi Mohammed", "Dr-Mohamed Hussein Ibrahim",
+             "Abdirahman Hussein Mohamed", "Mohamed Haji Mohamed", "Ayan Muse Osman"]
+    for i, n in enumerate(names):
+        make_user(f"l{i}@example.com", name=n)
+    data = workbook({"BARE05": [HEADER,
+        ["Sat", "8:00 AM - 9:30 AM", "Osman Moallim Ali", "Probability and Statistics", 201],
+        ["Sun", "8:00 AM - 9:30 AM", "Dr. Mohamed Elhajj Alsufi", "Material and Construction-III", 201],
+        ["Mon", "8:00 AM - 9:30 AM", "Dr. Mohamed Hussein", "Math for Architecture I", 201],
+        ["Tue", "8:00 AM - 9:30 AM", "Ayaan Muse", "Ambient and Building Environment-I", 201],
+        ["Wed", "8:00 AM - 9:30 AM", "Mohamed", "Ambiguous", 201]]})
+    body = upload(client, admin, data, path="/api/admin/timetable/upload/preview").get_json()
+    got = {c["course_name"]: c["lecturer_name"] for c in body["classes"]}
+    assert got == {
+        "Probability and Statistics": "Osman Moalim Ali",
+        "Material and Construction-III": "Dr.Mohammed Elhajalsoufi Mohammed",
+        "Math for Architecture I": "Dr-Mohamed Hussein Ibrahim",
+        "Ambient and Building Environment-I": "Ayan Muse Osman",
+        "Ambiguous": None,  # too vague to guess
+    }
+    assert {"excel": "Ayaan Muse", "lecturer": "Ayan Muse Osman"} in body["close_matches"]
