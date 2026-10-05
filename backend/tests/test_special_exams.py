@@ -239,3 +239,17 @@ def test_documents_are_optional_and_validated(client, student, timetable):
     many = [(io.BytesIO(PDF), f"f{i}.pdf") for i in range(6)]
     assert submit_with_files(client, student, many, exam_date=date.today().isoformat()).status_code == 400
     assert SpecialExamRequest.query.count() == 1
+
+
+def test_notification_types_fit_the_column():
+    """Postgres rejects a notification type longer than the column (SQLite in
+    the tests doesn't), which once made approving a request fail with a 500."""
+    import pathlib
+    import re
+
+    from app.models import Notification
+
+    limit = Notification.__table__.c.type.type.length
+    source = "\n".join(p.read_text() for p in pathlib.Path("app").rglob("*.py"))
+    too_long = [t for t in set(re.findall(r'type="([a-z_]+)"', source)) if len(t) > limit]
+    assert not too_long

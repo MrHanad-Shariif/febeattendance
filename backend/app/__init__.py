@@ -114,6 +114,12 @@ NEW_COLUMNS = [
     ("special_exam_requests", "period_id", "INTEGER REFERENCES special_exam_periods(id) ON DELETE SET NULL"),
 ]
 
+# Columns made longer after deployment: (table, column, new type). Postgres
+# enforces lengths (SQLite, used by the tests, does not), so widen them here.
+WIDENED_COLUMNS = [
+    ("notifications", "type", "VARCHAR(50)"),
+]
+
 # Settings whose old default was replaced: (key, old default, new value).
 # Only rows still holding the old default are changed.
 RENAMED_DEFAULTS = [
@@ -127,6 +133,10 @@ def _add_missing_columns():
     for table, column, ddl in NEW_COLUMNS:
         if table in tables and column not in {c["name"] for c in inspector.get_columns(table)}:
             db.session.execute(db.text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
+    if db.engine.dialect.name == "postgresql":
+        for table, column, ddl in WIDENED_COLUMNS:
+            if table in tables:
+                db.session.execute(db.text(f"ALTER TABLE {table} ALTER COLUMN {column} TYPE {ddl}"))
     db.session.commit()
 
 
