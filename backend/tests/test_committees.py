@@ -281,6 +281,26 @@ def test_information_sharing_permissions_and_audience(client, people):
     assert EmailOutbox.query.first().subject == "FEBEMS Information Sharing – Exam timetable"
 
 
+def test_information_sharing_delete(client, people):
+    body = {"title": "Exam timetable", "audience": "all_staff"}
+    post_id = client.post("/api/notices", json=body, headers=auth_header(people["team"])).get_json()["id"]
+    listed = client.get("/api/notices", headers=auth_header(people["outsider"])).get_json()
+    assert listed[0]["can_delete"] is False
+    assert client.get("/api/notices", headers=auth_header(people["team"])).get_json()[0]["can_delete"] is True
+    assert client.delete(f"/api/notices/{post_id}", headers=auth_header(people["outsider"])).status_code == 403
+    assert client.delete(f"/api/notices/{post_id}", headers=auth_header(people["team"])).status_code == 200
+    assert client.get("/api/notices", headers=auth_header(people["team"])).get_json() == []
+
+
+def test_minutes_notice_cannot_be_deleted(client, people):
+    meeting_id = _schedule(client, people).get_json()["id"]
+    _publish(client, people, meeting_id, visibility="faculty")
+    h = auth_header(people["admin"])
+    notice = client.get("/api/notices", headers=h).get_json()[0]
+    assert notice["minutes_id"] and notice["can_delete"] is False
+    assert client.delete(f"/api/notices/{notice['id']}", headers=h).status_code == 409
+
+
 # ---------- Notifications + outbox ----------
 
 def test_notification_summary_is_per_user(client, people):

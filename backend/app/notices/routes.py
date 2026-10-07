@@ -15,6 +15,20 @@ from app.utils.validation import ValidationError, clean_choice, clean_int, clean
 STAFF_ROLES = ("admin", "lecturer")
 
 
+def can_delete_notice(user, post) -> bool:
+    """Admins remove any notice, publishers their own. Minutes-backed notices
+    are a permanent record and can't be removed here."""
+    if post.minutes_id:
+        return False
+    return is_admin(user) or (post.published_by_id == user.id and can_share_information(user))
+
+
+def notice_dict(user, post):
+    data = post.to_dict()
+    data["can_delete"] = can_delete_notice(user, post)
+    return data
+
+
 @notices_bp.get("/notices")
 @roles_required(*STAFF_ROLES)
 def list_notices():
@@ -31,7 +45,7 @@ def list_notices():
     if args.get("q"):
         needle = args["q"].strip().lower()[:100]
         rows = [p for p in rows if needle in f"{p.title} {p.description or ''}".lower()]
-    return jsonify([p.to_dict() for p in rows])
+    return jsonify([notice_dict(user, p) for p in rows])
 
 
 @notices_bp.get("/notices/<int:post_id>")
@@ -40,9 +54,7 @@ def get_notice(post_id):
     user = current_user()
     post = InformationPost.query.get_or_404(post_id)
     require(can_view_notice(user, post))
-    data = post.to_dict()
-    data["can_delete"] = is_admin(user) or post.published_by_id == user.id
-    return jsonify(data)
+    return jsonify(notice_dict(user, post))
 
 
 @notices_bp.post("/notices")
@@ -89,9 +101,9 @@ def publish_notice():
 def delete_notice(post_id):
     user = current_user()
     post = InformationPost.query.get_or_404(post_id)
-    require(is_admin(user) or (post.published_by_id == user.id and can_share_information(user)))
     if post.minutes_id:
         raise ValidationError("This notice belongs to published minutes, which are a permanent record.", status=409)
+    require(can_delete_notice(user, post))
     delete_document(post.file_path)
     db.session.delete(post)
     db.session.commit()

@@ -1,14 +1,16 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Megaphone, Paperclip } from "lucide-react";
+import { Megaphone, MoreHorizontal, Paperclip, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import client, { apiErrorMessage } from "@/api/client";
 import { useAuth } from "@/context/AuthContext.jsx";
 import { Field, FileInput, OptionSelect, useApi } from "@/components/committees/shared";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { DataTable, DataTableColumnHeader, exactFilter } from "@/components/data-table";
 import { Alert, PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -96,9 +98,20 @@ export default function InformationSharing() {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [open, setOpen] = useState(false);
+  const [toDelete, setToDelete] = useState(null);
   const params = new URLSearchParams(Object.entries({ from, to }).filter(([, v]) => v));
   const { data, loading, error, reload } = useApi(`/notices?${params}`, []);
   const canShare = user?.capabilities?.can_share_information;
+
+  async function remove(post) {
+    try {
+      await client.delete(`/notices/${post.id}`);
+      toast.success("Notice deleted");
+      reload();
+    } catch (err) {
+      toast.error(apiErrorMessage(err));
+    }
+  }
 
   const columns = useMemo(
     () => [
@@ -136,6 +149,30 @@ export default function InformationSharing() {
         header: ({ column }) => <DataTableColumnHeader column={column} title="Date" />,
         meta: { label: "Date", exportValue: (r) => formatDateTime(r.published_at) },
         cell: ({ row }) => formatDateTime(row.original.published_at),
+      },
+      {
+        id: "actions",
+        header: "",
+        enableHiding: false,
+        enableSorting: false,
+        meta: { noExport: true, className: "w-12 text-right" },
+        cell: ({ row }) =>
+          row.original.can_delete && (
+            <div onClick={(e) => e.stopPropagation()}>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Row actions">
+                    <MoreHorizontal />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => setToDelete(row.original)}>
+                    <Trash2 /> Delete
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          ),
       },
     ],
     []
@@ -175,6 +212,14 @@ export default function InformationSharing() {
         emptyText="Nothing has been shared yet."
       />
       <PublishDialog open={open} onOpenChange={setOpen} onSaved={reload} />
+      <ConfirmDialog
+        open={!!toDelete}
+        onOpenChange={(o) => !o && setToDelete(null)}
+        title={`Delete "${toDelete?.title}"?`}
+        description="The notice and its attached document are removed for everyone. This cannot be undone."
+        confirmLabel="Delete"
+        onConfirm={() => remove(toDelete)}
+      />
     </div>
   );
 }
