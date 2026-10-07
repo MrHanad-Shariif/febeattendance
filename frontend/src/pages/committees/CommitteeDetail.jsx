@@ -255,7 +255,7 @@ export default function CommitteeDetail() {
           <MeetingTable meetings={meetings.data} loading={meetings.loading} showCommittee={false} />
         </TabsContent>
         <TabsContent value="minutes">
-          <MinutesTable minutes={minutes.data} loading={minutes.loading} showCommittee={false} />
+          <MinutesTable minutes={minutes.data} loading={minutes.loading} showCommittee={false} onChanged={minutes.reload} />
         </TabsContent>
       </Tabs>
 

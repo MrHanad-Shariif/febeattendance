@@ -20,7 +20,7 @@ export default function MinutesArchive({ kind }) {
   const [applied, setApplied] = useState({ ...EMPTY, kind: kind || "" });
   const committees = useApi("/committees/options", []);
   const params = new URLSearchParams(Object.entries(applied).filter(([, v]) => v));
-  const { data, loading, error } = useApi(`/minutes?${params}`, []);
+  const { data, loading, error, reload } = useApi(`/minutes?${params}`, []);
   const canPublish = user?.role === "admin" || user?.capabilities?.is_admin_team;
   const set = (key) => (value) => setFilters((f) => ({ ...f, [key]: value }));
   const years = Array.from({ length: 8 }, (_, i) => new Date().getFullYear() + 1 - i);
@@ -98,7 +98,7 @@ export default function MinutesArchive({ kind }) {
         </CardContent>
       </Card>
       {error && <Alert>{error}</Alert>}
-      <MinutesTable minutes={data} loading={loading} />
+      <MinutesTable minutes={data} loading={loading} onChanged={reload} />
     </div>
   );
 }

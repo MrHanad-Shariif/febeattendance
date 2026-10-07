@@ -1,96 +1,20 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Megaphone, MoreHorizontal, Paperclip, Trash2 } from "lucide-react";
+import { Megaphone, Paperclip } from "lucide-react";
 import { toast } from "sonner";
 import client, { apiErrorMessage } from "@/api/client";
 import { useAuth } from "@/context/AuthContext.jsx";
-import { Field, FileInput, OptionSelect, useApi } from "@/components/committees/shared";
+import { MINUTES_DELETE_TEXT, MinutesEditDialog } from "@/components/committees/MinutesEditDialog.jsx";
+import { NoticeDialog } from "@/components/committees/NoticeDialog.jsx";
+import { RowActions, actionsColumn } from "@/components/committees/RowActions.jsx";
+import { useApi } from "@/components/committees/shared";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { DataTable, DataTableColumnHeader, exactFilter } from "@/components/data-table";
 import { Alert, PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { AUDIENCES, NOTICE_CATEGORIES, formatDateTime, labelOf, toFormData } from "@/lib/committees";
-
-function PublishDialog({ open, onOpenChange, onSaved }) {
-  const committees = useApi(open ? "/committees/options" : null, []);
-  const [form, setForm] = useState({ title: "", description: "", category: "announcement", audience: "all_staff", committee_id: "" });
-  const [file, setFile] = useState(null);
-  const [saving, setSaving] = useState(false);
-  const set = (key) => (value) => setForm((f) => ({ ...f, [key]: value }));
-
-  async function submit(e) {
-    e.preventDefault();
-    setSaving(true);
-    try {
-      await client.post("/notices", toFormData({ ...form, file }));
-      toast.success("Published. Recipients are being notified by email.");
-      setForm({ title: "", description: "", category: "announcement", audience: "all_staff", committee_id: "" });
-      setFile(null);
-      onOpenChange(false);
-      onSaved();
-    } catch (err) {
-      toast.error(apiErrorMessage(err));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
-        <form onSubmit={submit} className="space-y-4">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Megaphone className="h-5 w-5 text-primary" /> Share information
-            </DialogTitle>
-            <DialogDescription>Recipients get a notification and an email at their registered address.</DialogDescription>
-          </DialogHeader>
-          <Field label="Title" htmlFor="n-title">
-            <Input id="n-title" required maxLength={255} value={form.title} onChange={(e) => set("title")(e.target.value)} />
-          </Field>
-          <Field label="Message" htmlFor="n-desc">
-            <Textarea id="n-desc" rows={5} value={form.description} onChange={(e) => set("description")(e.target.value)} />
-          </Field>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Category" htmlFor="n-cat">
-              <OptionSelect id="n-cat" value={form.category} onChange={set("category")} options={NOTICE_CATEGORIES.filter((c) => c.value !== "meeting_minutes")} />
-            </Field>
-            <Field label="Audience" htmlFor="n-aud">
-              <OptionSelect id="n-aud" value={form.audience} onChange={set("audience")} options={AUDIENCES} />
-            </Field>
-          </div>
-          {form.audience === "committee" && (
-            <Field label="Committee" htmlFor="n-committee">
-              <OptionSelect
-                id="n-committee"
-                value={form.committee_id}
-                onChange={set("committee_id")}
-                placeholder="Choose a committee"
-                options={(committees.data || []).map((c) => ({ value: c.id, label: c.name }))}
-              />
-            </Field>
-          )}
-          <Field label="Document (optional)" htmlFor="n-file">
-            <FileInput id="n-file" onChange={setFile} />
-          </Field>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={saving}>
-              {saving ? "Publishing..." : "Publish"}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
+import { AUDIENCES, NOTICE_CATEGORIES, formatDateTime, labelOf } from "@/lib/committees";
 
 export default function InformationSharing() {
   const { user } = useAuth();
@@ -98,6 +22,8 @@ export default function InformationSharing() {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [editingMinutesId, setEditingMinutesId] = useState(null);
   const [toDelete, setToDelete] = useState(null);
   const params = new URLSearchParams(Object.entries({ from, to }).filter(([, v]) => v));
   const { data, loading, error, reload } = useApi(`/notices?${params}`, []);
@@ -106,7 +32,7 @@ export default function InformationSharing() {
   async function remove(post) {
     try {
       await client.delete(`/notices/${post.id}`);
-      toast.success("Notice deleted");
+      toast.success(post.minutes_id ? "Minutes deleted" : "Notice deleted");
       reload();
     } catch (err) {
       toast.error(apiErrorMessage(err));
@@ -150,30 +76,12 @@ export default function InformationSharing() {
         meta: { label: "Date", exportValue: (r) => formatDateTime(r.published_at) },
         cell: ({ row }) => formatDateTime(row.original.published_at),
       },
-      {
-        id: "actions",
-        header: "",
-        enableHiding: false,
-        enableSorting: false,
-        meta: { noExport: true, className: "w-12 text-right" },
-        cell: ({ row }) =>
-          row.original.can_delete && (
-            <div onClick={(e) => e.stopPropagation()}>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Row actions">
-                    <MoreHorizontal />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => setToDelete(row.original)}>
-                    <Trash2 /> Delete
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-          ),
-      },
+      actionsColumn((p) => (
+        <RowActions
+          onEdit={p.can_edit ? () => (p.minutes_id ? setEditingMinutesId(p.minutes_id) : setEditing(p)) : null}
+          onDelete={p.can_delete ? () => setToDelete(p) : null}
+        />
+      )),
     ],
     []
   );
@@ -211,12 +119,18 @@ export default function InformationSharing() {
         initialSorting={[{ id: "published_at", desc: true }]}
         emptyText="Nothing has been shared yet."
       />
-      <PublishDialog open={open} onOpenChange={setOpen} onSaved={reload} />
+      <NoticeDialog open={open} onOpenChange={setOpen} onSaved={reload} />
+      <NoticeDialog open={!!editing} notice={editing} onOpenChange={(o) => !o && setEditing(null)} onSaved={reload} />
+      <MinutesEditDialog minutesId={editingMinutesId} onOpenChange={(o) => !o && setEditingMinutesId(null)} onSaved={reload} />
       <ConfirmDialog
         open={!!toDelete}
         onOpenChange={(o) => !o && setToDelete(null)}
         title={`Delete "${toDelete?.title}"?`}
-        description="The notice and its attached document are removed for everyone. This cannot be undone."
+        description={
+          toDelete?.minutes_id
+            ? MINUTES_DELETE_TEXT
+            : "The notice and its attached document are removed for everyone. This cannot be undone."
+        }
         confirmLabel="Delete"
         onConfirm={() => remove(toDelete)}
       />

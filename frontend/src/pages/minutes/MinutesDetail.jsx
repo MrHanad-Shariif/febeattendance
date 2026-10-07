@@ -1,6 +1,11 @@
-import { Link, useParams } from "react-router-dom";
-import { Printer } from "lucide-react";
+import { useState } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { Pencil, Printer, Trash2 } from "lucide-react";
+import { toast } from "sonner";
+import client, { apiErrorMessage } from "@/api/client";
+import { MINUTES_DELETE_TEXT, MinutesEditDialog } from "@/components/committees/MinutesEditDialog.jsx";
 import { DocumentActions, InfoRow, useApi } from "@/components/committees/shared";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Alert, PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,9 +14,22 @@ import { formatDate, formatDateTime } from "@/lib/committees";
 
 export default function MinutesDetail() {
   const { id } = useParams();
-  const { data: m, error } = useApi(`/minutes/${id}`);
+  const navigate = useNavigate();
+  const { data: m, error, reload } = useApi(`/minutes/${id}`);
+  const [editing, setEditing] = useState(false);
+  const [confirm, setConfirm] = useState(false);
   if (error) return <Alert>{error}</Alert>;
   if (!m) return <Skeleton className="h-64 w-full" />;
+
+  async function remove() {
+    try {
+      await client.delete(`/minutes/${m.id}`);
+      toast.success("Minutes deleted");
+      navigate("/meeting-minutes");
+    } catch (err) {
+      toast.error(apiErrorMessage(err));
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -19,11 +37,23 @@ export default function MinutesDetail() {
         title={m.title}
         description={`${m.committee_name} · meeting of ${formatDate(m.meeting_date)}`}
         actions={
-          <Button variant="outline" asChild>
-            <Link to={`/print/minutes/${m.id}`} target="_blank">
-              <Printer /> Printable version
-            </Link>
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            {m.can_edit && (
+              <Button variant="outline" onClick={() => setEditing(true)}>
+                <Pencil /> Edit
+              </Button>
+            )}
+            {m.can_delete && (
+              <Button variant="outline" className="text-destructive" onClick={() => setConfirm(true)}>
+                <Trash2 /> Delete
+              </Button>
+            )}
+            <Button variant="outline" asChild>
+              <Link to={`/print/minutes/${m.id}`} target="_blank">
+                <Printer /> Printable version
+              </Link>
+            </Button>
+          </div>
         }
       />
       <div className="grid gap-6 lg:grid-cols-3">
@@ -60,6 +90,8 @@ export default function MinutesDetail() {
           </CardContent>
         </Card>
       </div>
+      <MinutesEditDialog minutesId={editing ? m.id : null} onOpenChange={setEditing} onSaved={reload} />
+      <ConfirmDialog open={confirm} onOpenChange={setConfirm} title={`Delete "${m.title}"?`} description={MINUTES_DELETE_TEXT} confirmLabel="Delete" onConfirm={remove} />
     </div>
   );
 }

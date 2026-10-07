@@ -10,7 +10,7 @@ from flask import jsonify, request
 
 from app.extensions import db
 from app.meetings import meetings_bp
-from app.models import Committee, InformationPost, Meeting, MeetingMinutes, utcnow
+from app.models import Committee, InformationPost, Meeting, MeetingMinutes, Notification, utcnow
 from app.utils.archive import file_meeting_agenda
 from app.utils.audiences import audience_users, committee_users
 from app.utils.authz import current_user, roles_required
@@ -320,7 +320,79 @@ def list_minutes():
     if args.get("q"):
         needle = args["q"].strip().lower()[:100]
         rows = [m for m in rows if needle in f"{m.title} {m.summary or ''} {m.committee.name}".lower()]
-    return jsonify([m.to_dict() for m in rows])
+    return jsonify([_minutes_dict(m, user) for m in rows])
+
+
+def _minutes_dict(minutes: MeetingMinutes, user) -> dict:
+    data = minutes.to_dict()
+    data["can_edit"] = data["can_delete"] = can_publish_minutes(user, minutes.committee)
+    return data
+
+
+def _sync_minutes_post(minutes: MeetingMinutes):
+    """Keep the Information Sharing side of the record in step with the minutes."""
+    post = InformationPost.query.filter_by(minutes_id=minutes.id).first()
+    if not post:
+        return
+    post.title = minutes.title
+    post.description = minutes.summary or (
+        f"Official minutes of {minutes.committee.name}, meeting of {minutes.meeting_date:%d %B %Y}."
+    )
+    post.audience = "all_staff" if minutes.visibility == "faculty" else "committee"
+    post.committee = minutes.committee
+
+
+def delete_minutes_record(minutes: MeetingMinutes):
+    """Remove minutes together with their Information Sharing post, the
+    notifications that point at them and the stored document."""
+    posts = InformationPost.query.filter_by(minutes_id=minutes.id).all()
+    for post in posts:
+        Notification.query.filter_by(type="notice", related_record_id=post.id).delete()
+        db.session.delete(post)
+    Notification.query.filter_by(type="minutes", related_record_id=minutes.id).delete()
+    file_path = minutes.file_path
+    db.session.delete(minutes)
+    db.session.commit()
+    delete_document(file_path)
+
+
+@meetings_bp.put("/minutes/<int:minutes_id>")
+@roles_required(*STAFF_ROLES)
+def update_minutes(minutes_id):
+    user = current_user()
+    minutes = MeetingMinutes.query.get_or_404(minutes_id)
+    require(can_publish_minutes(user, minutes.committee), "Only authorised Administration Team members can edit minutes.")
+    data = _payload()
+    if "committee_id" in data and not minutes.meeting:
+        minutes.committee = Committee.query.get_or_404(clean_int(data.get("committee_id"), "Committee", minimum=1) or 0)
+    if "title" in data:
+        minutes.title = clean_text(data.get("title"), "Title", max_len=255, required=True)
+    if "meeting_date" in data:
+        minutes.meeting_date = parse_iso_date(data.get("meeting_date"), "Meeting date")
+    if "summary" in data:
+        minutes.summary = clean_text(data.get("summary"), "Summary", max_len=20000)
+    if "visibility" in data:
+        minutes.visibility = clean_choice(data.get("visibility"), "Visibility", MeetingMinutes.VISIBILITIES)
+    saved = save_document(request.files.get("file"), "minutes")
+    old_file = None
+    if saved:
+        old_file = minutes.file_path
+        minutes.file_name, minutes.file_path = saved
+    _sync_minutes_post(minutes)
+    db.session.commit()
+    if old_file:
+        delete_document(old_file)
+    return jsonify(_minutes_dict(minutes, user))
+
+
+@meetings_bp.delete("/minutes/<int:minutes_id>")
+@roles_required(*STAFF_ROLES)
+def delete_minutes(minutes_id):
+    user = current_user()
+    minutes = MeetingMinutes.query.get_or_404(minutes_id)
+    require(can_publish_minutes(user, minutes.committee), "Only authorised Administration Team members can delete minutes.")
+    delete_minutes_record(minutes)
+    return jsonify({"message": "Minutes deleted"})
 
 
 @meetings_bp.get("/minutes/<int:minutes_id>")
@@ -329,7 +401,7 @@ def get_minutes(minutes_id):
     user = current_user()
     minutes = MeetingMinutes.query.get_or_404(minutes_id)
     require(can_view_minutes(user, minutes))
-    data = minutes.to_dict()
+    data = _minutes_dict(minutes, user)
     data["meeting"] = minutes.meeting.to_dict() if minutes.meeting else None
     return jsonify(data)
 

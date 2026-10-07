@@ -292,13 +292,50 @@ def test_information_sharing_delete(client, people):
     assert client.get("/api/notices", headers=auth_header(people["team"])).get_json() == []
 
 
-def test_minutes_notice_cannot_be_deleted(client, people):
+def test_information_sharing_edit(client, people):
+    body = {"title": "Exam timetable", "description": "Draft", "audience": "all_staff"}
+    post_id = client.post("/api/notices", json=body, headers=auth_header(people["team"])).get_json()["id"]
+    edit = {"title": "Final exam timetable", "description": "Updated", "category": "circular", "audience": "all_staff"}
+    assert client.put(f"/api/notices/{post_id}", json=edit, headers=auth_header(people["outsider"])).status_code == 403
+    res = client.put(f"/api/notices/{post_id}", json=edit, headers=auth_header(people["team"]))
+    assert res.status_code == 200, res.get_json()
+    notice = client.get(f"/api/notices/{post_id}", headers=auth_header(people["team"])).get_json()
+    assert (notice["title"], notice["description"], notice["category"]) == ("Final exam timetable", "Updated", "circular")
+
+
+def test_minutes_edit_updates_its_notice(client, people):
+    meeting_id = _schedule(client, people).get_json()["id"]
+    minutes_id = _publish(client, people, meeting_id).get_json()["id"]
+    h = auth_header(people["team"])
+    edit = {"title": "Lab review (corrected)", "meeting_date": "2026-10-09", "summary": "Fixed", "visibility": "faculty"}
+    assert client.put(f"/api/minutes/{minutes_id}", json=edit, headers=auth_header(people["chair"])).status_code == 403
+    res = client.put(f"/api/minutes/{minutes_id}", json=edit, headers=h)
+    assert res.status_code == 200, res.get_json()
+    assert res.get_json()["meeting_date"] == "2026-10-09" and res.get_json()["visibility"] == "faculty"
+    notice = client.get("/api/notices", headers=h).get_json()[0]
+    assert (notice["title"], notice["description"], notice["audience"]) == ("Lab review (corrected)", "Fixed", "all_staff")
+    assert notice["can_edit"] is True
+    assert client.put(f"/api/notices/{notice['id']}", json={"title": "x"}, headers=h).status_code == 409
+
+
+def test_minutes_delete_removes_notice_too(client, people):
+    meeting_id = _schedule(client, people).get_json()["id"]
+    minutes_id = _publish(client, people, meeting_id, visibility="faculty").get_json()["id"]
+    assert client.delete(f"/api/minutes/{minutes_id}", headers=auth_header(people["outsider"])).status_code == 403
+    h = auth_header(people["admin"])
+    assert client.delete(f"/api/minutes/{minutes_id}", headers=h).status_code == 200
+    assert client.get("/api/minutes", headers=h).get_json() == []
+    assert client.get("/api/notices", headers=h).get_json() == []
+    assert Notification.query.filter_by(type="minutes").count() == 0
+
+
+def test_deleting_a_minutes_notice_deletes_the_minutes(client, people):
     meeting_id = _schedule(client, people).get_json()["id"]
     _publish(client, people, meeting_id, visibility="faculty")
-    h = auth_header(people["admin"])
+    h = auth_header(people["team"])
     notice = client.get("/api/notices", headers=h).get_json()[0]
-    assert notice["minutes_id"] and notice["can_delete"] is False
-    assert client.delete(f"/api/notices/{notice['id']}", headers=h).status_code == 409
+    assert client.delete(f"/api/notices/{notice['id']}", headers=h).status_code == 200
+    assert client.get("/api/minutes", headers=h).get_json() == []
 
 
 # ---------- Notifications + outbox ----------

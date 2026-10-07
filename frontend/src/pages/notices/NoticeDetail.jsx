@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Trash2 } from "lucide-react";
+import { Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import client, { apiErrorMessage } from "@/api/client";
+import { NoticeDialog } from "@/components/committees/NoticeDialog.jsx";
 import { DocumentActions, useApi } from "@/components/committees/shared";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Alert, PageHeader } from "@/components/page-header";
@@ -15,15 +16,16 @@ import { NOTICE_CATEGORIES, formatDateTime, labelOf } from "@/lib/committees";
 export default function NoticeDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { data: p, error } = useApi(`/notices/${id}`);
+  const { data: p, error, reload } = useApi(`/notices/${id}`);
   const [confirm, setConfirm] = useState(false);
+  const [editing, setEditing] = useState(false);
   if (error) return <Alert>{error}</Alert>;
   if (!p) return <Skeleton className="h-64 w-full" />;
 
   async function remove() {
     try {
       await client.delete(`/notices/${p.id}`);
-      toast.success("Notice removed");
+      toast.success("Notice deleted");
       navigate("/information");
     } catch (err) {
       toast.error(apiErrorMessage(err));
@@ -36,11 +38,19 @@ export default function NoticeDetail() {
         title={p.title}
         description={`${p.published_by_name || "—"} · ${formatDateTime(p.published_at)}`}
         actions={
-          p.can_delete &&
           !p.minutes_id && (
-            <Button variant="outline" className="text-destructive" onClick={() => setConfirm(true)}>
-              <Trash2 /> Remove
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              {p.can_edit && (
+                <Button variant="outline" onClick={() => setEditing(true)}>
+                  <Pencil /> Edit
+                </Button>
+              )}
+              {p.can_delete && (
+                <Button variant="outline" className="text-destructive" onClick={() => setConfirm(true)}>
+                  <Trash2 /> Delete
+                </Button>
+              )}
+            </div>
           )
         }
       />
@@ -51,7 +61,8 @@ export default function NoticeDetail() {
           {p.url && <DocumentActions url={p.url} fileName={p.file_name} />}
         </CardContent>
       </Card>
-      <ConfirmDialog open={confirm} onOpenChange={setConfirm} title="Remove this notice?" confirmLabel="Remove" onConfirm={remove} />
+      <NoticeDialog open={editing} notice={p} onOpenChange={setEditing} onSaved={reload} />
+      <ConfirmDialog open={confirm} onOpenChange={setConfirm} title="Delete this notice?" confirmLabel="Delete" onConfirm={remove} />
     </div>
   );
 }

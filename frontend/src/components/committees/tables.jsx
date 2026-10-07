@@ -1,9 +1,14 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AlertTriangle } from "lucide-react";
+import { toast } from "sonner";
+import client, { apiErrorMessage } from "@/api/client";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { DataTable, DataTableColumnHeader, exactFilter } from "@/components/data-table";
 import { KIND_OPTIONS, MEETING_STATUS, PRIORITIES, TASK_STATUS, formatDate, formatDateTime } from "@/lib/committees";
 import { MeetingStatusBadge, PriorityBadge, TaskStatusBadge } from "./shared";
+import { MINUTES_DELETE_TEXT, MinutesEditDialog } from "./MinutesEditDialog.jsx";
+import { RowActions, actionsColumn } from "./RowActions.jsx";
 
 const header = (title) => ({ column }) => <DataTableColumnHeader column={column} title={title} />;
 const toOptions = (map) => Object.entries(map).map(([value, v]) => ({ value, label: v.label }));
@@ -163,8 +168,21 @@ export function MeetingTable({ meetings, loading, showCommittee = true, toolbar,
   );
 }
 
-export function MinutesTable({ minutes, loading, toolbar, showCommittee = true }) {
+export function MinutesTable({ minutes, loading, toolbar, showCommittee = true, onChanged }) {
   const navigate = useNavigate();
+  const [editingId, setEditingId] = useState(null);
+  const [toDelete, setToDelete] = useState(null);
+
+  async function remove(m) {
+    try {
+      await client.delete(`/minutes/${m.id}`);
+      toast.success("Minutes deleted");
+      onChanged?.();
+    } catch (err) {
+      toast.error(apiErrorMessage(err));
+    }
+  }
+
   const columns = useMemo(
     () =>
       [
@@ -179,10 +197,14 @@ export function MinutesTable({ minutes, loading, toolbar, showCommittee = true }
         { accessorKey: "meeting_date", header: header("Meeting date"), meta: { label: "Meeting date" }, cell: ({ row }) => formatDate(row.original.meeting_date) },
         { accessorKey: "published_at", header: header("Released"), meta: { label: "Released", exportValue: (r) => formatDateTime(r.published_at) }, cell: ({ row }) => formatDateTime(row.original.published_at) },
         { accessorKey: "visibility", header: header("Visibility"), meta: { label: "Visibility" }, cell: ({ row }) => (row.original.visibility === "faculty" ? "Faculty-wide" : "Committee") },
+        actionsColumn((m) => (
+          <RowActions onEdit={m.can_edit ? () => setEditingId(m.id) : null} onDelete={m.can_delete ? () => setToDelete(m) : null} />
+        )),
       ].filter(Boolean),
     [showCommittee]
   );
   return (
+    <>
     <DataTable
       columns={columns}
       data={minutes || []}
@@ -194,5 +216,15 @@ export function MinutesTable({ minutes, loading, toolbar, showCommittee = true }
       initialSorting={[{ id: "meeting_date", desc: true }]}
       emptyText="No minutes have been published yet."
     />
+    <MinutesEditDialog minutesId={editingId} onOpenChange={(o) => !o && setEditingId(null)} onSaved={() => onChanged?.()} />
+    <ConfirmDialog
+      open={!!toDelete}
+      onOpenChange={(o) => !o && setToDelete(null)}
+      title={`Delete "${toDelete?.title}"?`}
+      description={MINUTES_DELETE_TEXT}
+      confirmLabel="Delete"
+      onConfirm={() => remove(toDelete)}
+    />
+    </>
   );
 }
