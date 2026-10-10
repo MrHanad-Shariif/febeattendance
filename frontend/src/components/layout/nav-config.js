@@ -1,5 +1,7 @@
 import {
   Archive,
+  CalendarOff,
+  Trophy,
   CalendarX2,
   Bell,
   NotebookPen,
@@ -77,7 +79,8 @@ const MANAGEMENT = [
     label: "Lecturers",
     icon: Users,
     children: [
-      { label: "Today's attendance", icon: ClipboardCheck, to: "/admin/overview", perms: ["lecturer_attendance:view"] },
+      { label: "Daily attendance", icon: ClipboardCheck, to: "/admin/overview", perms: ["lecturer_attendance:view"] },
+      { label: "Absences & leave", icon: CalendarOff, to: "/admin/lecturer-absences", perms: ["lecturer_absences:view"] },
       { label: "Manage lecturers", icon: UserCheck, to: "/admin/lecturers", perms: ["lecturers:view"] },
       { label: "Timetable", icon: CalendarClock, to: "/admin/timetable", perms: ["timetable:view"] },
       { label: "Course completion", icon: ClipboardPen, to: "/admin/course-completion", perms: ["course_completion:view"] },
@@ -101,6 +104,14 @@ export function reportLinks(user) {
   const can = (...codes) => codes.some((c) => (caps.permissions || []).includes(c));
   const committeeReports = (caps.chaired_committee_ids || []).length > 0 || caps.can_view_all_committees;
   return [
+    can("reports:view") && {
+      label: "Attendance reports", icon: FileBarChart, to: "/admin/attendance-reports",
+      description: "Daily, monthly and semester reports for lecturers and students, summary or detailed, with Excel export.",
+    },
+    can("reports:view") && {
+      label: "Attendance rankings", icon: Trophy, to: "/admin/attendance-rankings",
+      description: "Top lecturers, highest absence and lateness, and students who need warnings.",
+    },
     can("reports:view") && {
       label: "Lecturer attendance", icon: Users, to: "/admin/reports",
       description: "Monthly on-time, late, absent and left-early counts per lecturer, with CSV export.",

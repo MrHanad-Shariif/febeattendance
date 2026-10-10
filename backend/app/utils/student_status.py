@@ -94,16 +94,78 @@ def total_sessions_for_course(batch: str, course_name: str, settings: dict | Non
     return total
 
 
+def exempted_sessions_for_course(batch: str, course_name: str, settings: dict | None = None, index=None) -> int:
+    """How many of this course's sessions in the semester a lecturer
+    absence covers. Those sessions are not held, so they come off the
+    planned total as well as out of every student's absences."""
+    from app.utils.absences import AbsenceIndex
+
+    index = index or AbsenceIndex.current()
+    if not index.has_any():
+        return 0
+    cache = index.__dict__.setdefault("course_exempt_cache", {})
+    if (batch, course_name) in cache:
+        return cache[(batch, course_name)]
+    settings = settings if settings is not None else get_all_settings()
+    try:
+        start = date_cls.fromisoformat(get_setting_str("semester_start_date", settings))
+        end = date_cls.fromisoformat(get_setting_str("semester_end_date", settings))
+    except ValueError:
+        return 0
+    no_class_dates = get_no_class_dates(settings)
+    entries = [e for e in Timetable.query.filter_by(batch=batch, course_name=course_name).all()
+               if e.lecturer_id in index.by_lecturer]
+    # An ongoing absence (no end date) only takes off sessions already
+    # passed: its future is unknown, and projecting it to the semester's end
+    # would shrink the planned total and inflate everyone's percentage.
+    today = date_cls.today()
+    count = 0
+    for entry in entries:
+        d = start
+        while d <= end:
+            if teaches_on(entry, d, no_class_dates):
+                a = index.covering(entry, d)
+                if a is not None and (a.effective_end is not None or d <= today):
+                    count += 1
+            d += timedelta(days=1)
+    cache[(batch, course_name)] = count
+    return count
+
+
+def counted_records(records, index=None):
+    """(counted, exempted): stored rows split by whether a lecturer
+    absence exempts their session (and no admin chose to keep the row)."""
+    from app.utils.absences import AbsenceIndex
+
+    index = index or AbsenceIndex.current()
+    if not index.has_any():
+        return list(records), []
+    counted, exempted = [], []
+    for r in records:
+        (exempted if index.exempting("student", r, r.timetable_entry, r.date) else counted).append(r)
+    return counted, exempted
+
+
 def compute_course_stats(student_id: int, batch: str, course_name: str, settings: dict | None = None) -> dict:
     """Attendance stats for one student in one course. The percentage used
     for the 25% retake/blocking rule is measured against the course's fixed
     total sessions for the whole semester (see total_sessions_for_course),
     not just the sessions that have happened so far."""
     settings = settings if settings is not None else get_all_settings()
+    records = course_records_query(student_id, batch, course_name).all()
+    return stats_from_records(records, batch, course_name, settings)
+
+
+def stats_from_records(records, batch: str, course_name: str, settings: dict, planned_cache: dict | None = None) -> dict:
+    """compute_course_stats from already-loaded rows (one student, one
+    course), so bulk reports can load every row in one query.
+    `planned_cache` memoises the per-course planned/exempted totals."""
     lates_equal_absent = get_setting_int("student_lates_equal_absent", settings)
     threshold_percent = get_setting_int("student_absence_threshold_percent", settings)
 
-    records = course_records_query(student_id, batch, course_name).all()
+    # Sessions a lecturer absence exempts never count: not as absences, not
+    # as attended sessions, and not in the planned total.
+    records, exempted_records = counted_records(records)
 
     on_time = sum(1 for r in records if r.status == "on_time")
     late = sum(1 for r in records if r.status == "late")
@@ -111,7 +173,15 @@ def compute_course_stats(student_id: int, batch: str, course_name: str, settings
     present_excused = sum(1 for r in records if r.status == "present")
 
     sessions_held = len(records)
-    total_sessions = total_sessions_for_course(batch, course_name, settings) or sessions_held
+    key = (batch, course_name)
+    if planned_cache is not None and key in planned_cache:
+        planned, exempted_sessions = planned_cache[key]
+    else:
+        planned = total_sessions_for_course(batch, course_name, settings)
+        exempted_sessions = exempted_sessions_for_course(batch, course_name, settings)
+        if planned_cache is not None:
+            planned_cache[key] = (planned, exempted_sessions)
+    total_sessions = max(planned - exempted_sessions, sessions_held) if planned else sessions_held
     late_converted_absences = (late // lates_equal_absent) if lates_equal_absent > 0 else 0
     effective_absences = raw_absent + late_converted_absences
 
@@ -127,6 +197,8 @@ def compute_course_stats(student_id: int, batch: str, course_name: str, settings
         "late": late,
         "absent": raw_absent,
         "present_excused": present_excused,
+        "exempted_sessions": exempted_sessions,
+        "exempted_records": len(exempted_records),
         "late_converted_absences": late_converted_absences,
         "effective_absences": effective_absences,
         "absence_percentage": percentage,
@@ -149,3 +221,15 @@ def all_course_keys_for_batch(batch: str) -> list[tuple[str, str]]:
     rows = (Timetable.query.filter(batch_filter(Timetable.batch, batch))
             .with_entities(Timetable.batch, Timetable.course_name).distinct().all())
     return sorted((r[0], r[1]) for r in rows)
+
+
+def course_keys_for_student(student) -> list[tuple[str, str]]:
+    """The courses of the student's current class plus every course they
+    have attendance in -- so a corrected class (see StudentClassChange)
+    keeps the history recorded under the old one."""
+    keys = set(all_course_keys_for_batch(student.batch)) if student.batch else set()
+    rows = (StudentAttendance.query.join(Timetable, StudentAttendance.timetable_id == Timetable.id)
+            .filter(StudentAttendance.student_id == student.id)
+            .with_entities(Timetable.batch, Timetable.course_name).distinct().all())
+    keys.update((r[0], r[1]) for r in rows if r[0])
+    return sorted(keys)

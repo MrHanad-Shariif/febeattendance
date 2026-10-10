@@ -11,7 +11,9 @@ from app.admin import admin_bp
 from app.extensions import db
 from app.models import (
     Batch, BoardCodeAttempt, BoardSession, Course, EmailOutbox, FaceCheckAttempt, Room, User, Timetable, Attendance, Setting, StudentAttendance,
+    StudentClassChange,
 )
+from app.utils.absences import AbsenceIndex, split_day_classes
 from app.utils.authz import current_user, permission_required
 from app.utils.batches import batch_filter, members
 from app.utils.rbac import has_permission
@@ -526,6 +528,18 @@ def attendance_today():
     return jsonify(get_today_rows(date.today()))
 
 
+@admin_bp.get("/attendance/daily")
+@permission_required("lecturer_attendance:view", "reports:view")
+def attendance_daily():
+    """The lecturer daily report: one row per session (numbered 1, 2, 3 per
+    lecturer) with its class, course, scheduled time, the day's check-in and
+    check-out, the session's status and remarks. ?date= for any past day."""
+    from app.utils.attendance_report import lecturer_session_rows
+
+    the_date = parse_iso_date(request.args["date"], "date") if request.args.get("date") else date.today()
+    return jsonify({"date": the_date.isoformat(), "rows": lecturer_session_rows(the_date, the_date)})
+
+
 @admin_bp.get("/attendance")
 @permission_required("lecturer_attendance:view", "reports:view", "dashboard:view")
 def list_attendance():
@@ -569,6 +583,16 @@ def _month_bounds(month_str: str):
     return date(year, month, 1), date(year, month, last_day)
 
 
+def _day_justified_by_absence(record, no_class_dates, index) -> bool:
+    """A whole day a justified lecturer absence covers counts as justified
+    even without a typed remark (the absence is the recorded reason)."""
+    classes = get_day_classes(record.lecturer_id, record.date, no_class_dates)
+    if not classes:
+        return False
+    teaching, covered = split_day_classes(classes, record.date, index)
+    return not teaching and all(a.justified for a in covered.values())
+
+
 @admin_bp.get("/summary")
 @permission_required("reports:view")
 def attendance_summary():
@@ -577,6 +601,7 @@ def attendance_summary():
 
     lecturers = User.query.filter_by(role="lecturer").order_by(User.name).all()
     no_class_dates = get_no_class_dates()
+    index = AbsenceIndex.current()
 
     result = []
     for lecturer in lecturers:
@@ -593,7 +618,7 @@ def attendance_summary():
 
         sessions_covered = 0
         for r in records:
-            justified = bool(r.remarks and r.remarks.strip())
+            justified = bool(r.remarks and r.remarks.strip()) or _day_justified_by_absence(r, no_class_dates, index)
             if r.status == "absent":
                 counts["absent_justified" if justified else "absent_unjustified"] += 1
             elif r.status == "left_early":
@@ -641,6 +666,7 @@ def export_attendance():
     ).order_by(Attendance.date, Attendance.scheduled_start).all()
 
     no_class_dates = get_no_class_dates()
+    index = AbsenceIndex.current()
 
     buf = io.StringIO()
     writer = csv.writer(buf)
@@ -660,7 +686,7 @@ def export_attendance():
             r.scheduled_end.strftime("%H:%M") if r.scheduled_end else "",
             r.checkout_at.strftime("%Y-%m-%d %H:%M") if r.checkout_at else "",
             Attendance.STATUS_LABELS.get(r.status, r.status),
-            "Yes" if (r.remarks and r.remarks.strip()) else "No",
+            "Yes" if (r.remarks and r.remarks.strip()) or _day_justified_by_absence(r, no_class_dates, index) else "No",
             r.remarks or "",
             r.checkin_distance_m,
             r.checkout_distance_m,
@@ -725,7 +751,9 @@ def update_student(user_id):
             raise ValidationError("Please select a valid department")
         student.department = new_department
     if "batch" in data:
-        student.batch = clean_text(data.get("batch"), "Batch", max_len=50)
+        new_batch = clean_text(data.get("batch"), "Batch", max_len=50)
+        if new_batch != student.batch:
+            _change_student_class(student, new_batch, None)
     if "status" in data:
         if data["status"] not in ("active", "disabled"):
             raise ValidationError("Status must be active or disabled")
@@ -733,6 +761,48 @@ def update_student(user_id):
 
     db.session.commit()
     return jsonify(student.to_dict())
+
+
+def _change_student_class(student, new_batch, reason):
+    """Move a student to another class without touching anything else.
+    Past attendance keeps pointing at the old class's sessions; from now on
+    the student follows the new class's timetable. Logged for audit."""
+    actor = current_user()
+    db.session.add(StudentClassChange(
+        student_id=student.id, old_batch=student.batch, new_batch=new_batch, reason=reason,
+        changed_by_id=actor.id, changed_by_name=actor.name,
+    ))
+    student.batch = new_batch
+
+
+@admin_bp.post("/students/<int:user_id>/class")
+@permission_required("students:edit")
+def correct_student_class(user_id):
+    """Correct a student's registered class. The account, profile, face,
+    payments, submissions and attendance history all stay as they are."""
+    student = User.query.filter_by(id=user_id, role="student").first_or_404()
+    data = request.get_json(silent=True) or {}
+    new_batch = clean_text(data.get("batch"), "New class", max_len=50, required=True)
+    reason = clean_text(data.get("reason"), "Reason", max_len=500, required=True)
+    if new_batch == student.batch:
+        raise ValidationError("The student is already in that class")
+    known = {b.code for b in Batch.query.all()} | {
+        m for (code,) in Timetable.query.with_entities(Timetable.batch).distinct() for m in members(code)
+    }
+    if new_batch not in known:
+        raise ValidationError("Choose a class from the class list (Timetable → Batches)")
+    old_batch = student.batch
+    _change_student_class(student, new_batch, reason)
+    db.session.commit()
+    return jsonify({**student.to_dict(), "old_batch": old_batch})
+
+
+@admin_bp.get("/students/<int:user_id>/class-history")
+@permission_required("students:view")
+def student_class_history(user_id):
+    User.query.filter_by(id=user_id, role="student").first_or_404()
+    changes = StudentClassChange.query.filter_by(student_id=user_id).order_by(StudentClassChange.changed_at.desc()).all()
+    return jsonify([c.to_dict() for c in changes])
 
 
 @admin_bp.delete("/students/<int:user_id>")
@@ -791,6 +861,7 @@ def student_attendance_today():
     Drill into a session with /attendance/students/session/<timetable_id>."""
     today = date.today()
     no_class_dates = get_no_class_dates()
+    index = AbsenceIndex.current()
 
     # One row per class meeting today; a class shared by two batches
     # ("BTE13&BEE11") counts the students of both.
@@ -807,7 +878,10 @@ def student_attendance_today():
                 if r.status in counts:
                     counts[r.status] += 1
             checked_in = counts["on_time"] + counts["late"]
+            absence = index.covering(entry, today)
             rows.append({
+                "exempted": absence is not None,
+                "exempt_reason": absence.reason_label if absence else None,
                 "timetable_id": entry.id,
                 "batch": batch,
                 "course_name": entry.course_name,
@@ -847,6 +921,7 @@ def student_attendance_session(timetable_id):
 
     start_dt, _ = scheduled_datetimes(entry, the_date)
     now = datetime.now()
+    absence = AbsenceIndex.current().covering(entry, the_date)
 
     rows = []
     for student in students:
@@ -855,11 +930,13 @@ def student_attendance_session(timetable_id):
             row = record.to_dict()
         else:
             status = "absent" if should_mark_student_absent(start_dt, now, settings) else "not_yet"
+            if absence:
+                status = "exempted"
             row = {
                 "id": None, "student_id": student.id, "student_name": student.name,
                 "timetable_id": timetable_id, "date": the_date.isoformat(),
                 "checkin_at": None, "status": status,
-                "status_label": StudentAttendance.STATUS_LABELS.get(status, status), "remarks": None,
+                "status_label": "Class Session Exempted" if status == "exempted" else StudentAttendance.STATUS_LABELS.get(status, status), "remarks": None,
             }
         rows.append(row)
 
@@ -867,6 +944,8 @@ def student_attendance_session(timetable_id):
         "timetable": entry.to_dict(),
         "date": the_date.isoformat(),
         "students": rows,
+        "exempted": absence is not None,
+        "exempt_reason": absence.reason_label if absence else None,
     })
 
 

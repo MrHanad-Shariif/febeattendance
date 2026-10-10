@@ -4,6 +4,9 @@ from app.models import StudentAttendance
 from app.utils.schedule import get_batch_classes, scheduled_datetimes
 from app.utils.settings import get_all_settings, get_no_class_dates
 from app.utils.student_status import should_mark_student_absent, is_course_blocked
+from app.utils.absences import AbsenceIndex
+
+EXEMPT_LABEL = "Class Session Exempted"
 
 
 def get_student_today_rows(student, today) -> list[dict]:
@@ -20,15 +23,19 @@ def get_student_today_rows(student, today) -> list[dict]:
     now = datetime.now()
 
     entries = get_batch_classes(student.batch, today, no_class_dates)
+    index = AbsenceIndex.current()
     rows = []
     for entry in entries:
         start_dt, end_dt = scheduled_datetimes(entry, today)
         record = StudentAttendance.query.filter_by(student_id=student.id, timetable_id=entry.id, date=today).first()
+        absence = index.covering(entry, today)
 
         if record:
             row = record.to_dict()
         else:
             status = "absent" if should_mark_student_absent(start_dt, now, settings) else "not_yet"
+            if absence:
+                status = "exempted"
             row = {
                 "id": None,
                 "student_id": student.id,
@@ -42,14 +49,17 @@ def get_student_today_rows(student, today) -> list[dict]:
                 "checkin_at": None,
                 "checkin_distance_m": None,
                 "status": status,
-                "status_label": StudentAttendance.STATUS_LABELS.get(status, status),
+                "status_label": EXEMPT_LABEL if absence else StudentAttendance.STATUS_LABELS.get(status, status),
                 "remarks": None,
             }
+        row["exempted"] = absence is not None
+        if absence:
+            row["exempt_note"] = "Lecturer unavailable. This session does not count toward your attendance."
 
         blocked, stats = is_course_blocked(student.id, entry.batch, entry.course_name, settings)
         row["room"] = entry.room
         row["lecturer_name"] = entry.lecturer.name if entry.lecturer else None
-        row["blocked"] = blocked and not record  # already-recorded sessions aren't re-blocked retroactively
+        row["blocked"] = blocked and not record and not absence  # already-recorded sessions aren't re-blocked retroactively
         row["course_stats"] = stats
         row["sort_key"] = start_dt
         rows.append(row)

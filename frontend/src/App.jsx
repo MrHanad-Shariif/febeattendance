@@ -80,6 +80,9 @@ import Permissions from "./pages/access/Permissions.jsx";
 import SystemLogs from "./pages/access/SystemLogs.jsx";
 import AllReports from "./pages/reports/AllReports.jsx";
 import CheckinMethods from "./pages/reports/CheckinMethods.jsx";
+import AttendanceReports from "./pages/reports/AttendanceReports.jsx";
+import AttendanceRankings from "./pages/reports/AttendanceRankings.jsx";
+import LecturerAbsences from "./pages/admin/LecturerAbsences.jsx";
 import { homePath } from "./components/layout/nav-config";
 
 const STAFF = ["admin", "lecturer"];
@@ -180,6 +183,9 @@ export default function App() {
         <Route path="/admin/student-overview" element={allow(["student_attendance:view"], <StudentOverview />)} />
         <Route path="/admin/student-reports" element={allow(["reports:view"], <StudentReports />)} />
         <Route path="/admin/checkin-methods" element={allow(["reports:view"], <CheckinMethods />)} />
+        <Route path="/admin/attendance-reports" element={allow(["reports:view"], <AttendanceReports />)} />
+        <Route path="/admin/attendance-rankings" element={allow(["reports:view"], <AttendanceRankings />)} />
+        <Route path="/admin/lecturer-absences" element={allow(["lecturer_absences:view"], <LecturerAbsences />)} />
         <Route path="/admin/committees" element={allow(["committees:add", "committees:edit", "committees:delete"], <AdminCommittees />)} />
         <Route path="/admin/faculty-roles" element={allow(["faculty_roles:view"], <FacultyRoles />)} />
         <Route path="/reports" element={guard(STAFF, <AllReports />)} />

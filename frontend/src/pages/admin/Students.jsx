@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Ban, CheckCircle2, FileText, MoreHorizontal, ScanFace, Trash2 } from "lucide-react";
+import { ArrowRightLeft, Ban, CheckCircle2, FileText, MoreHorizontal, ScanFace, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import client, { apiErrorMessage } from "@/api/client";
 import StatusBadge from "@/components/StatusBadge.jsx";
@@ -11,6 +11,10 @@ import { AuthImage } from "@/components/auth-image";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { initials } from "@/lib/utils";
 import { useAuth } from "@/context/AuthContext.jsx";
 
@@ -23,6 +27,11 @@ export default function Students() {
   const [error, setError] = useState("");
   const [toDelete, setToDelete] = useState(null);
   const [toResetFace, setToResetFace] = useState(null);
+  const [toMove, setToMove] = useState(null);
+  const [batches, setBatches] = useState([]);
+  const [move, setMove] = useState({ batch: "", reason: "" });
+  const [moveHistory, setMoveHistory] = useState([]);
+  const [moving, setMoving] = useState(false);
 
   function load() {
     setLoading(true);
@@ -52,6 +61,29 @@ export default function Students() {
       load();
     } catch (err) {
       toast.error(apiErrorMessage(err));
+    }
+  }
+
+  function openMove(s) {
+    setToMove(s);
+    setMove({ batch: "", reason: "" });
+    setMoveHistory([]);
+    client.get("/admin/batches").then((res) => setBatches(res.data.filter((b) => !b.combined))).catch(() => setBatches([]));
+    client.get(`/admin/students/${s.id}/class-history`).then((res) => setMoveHistory(res.data)).catch(() => {});
+  }
+
+  async function handleMove(e) {
+    e.preventDefault();
+    setMoving(true);
+    try {
+      const res = await client.post(`/admin/students/${toMove.id}/class`, move);
+      toast.success(`${toMove.name} moved from ${res.data.old_batch || "no class"} to ${res.data.batch}. Their history is kept.`);
+      setToMove(null);
+      load();
+    } catch (err) {
+      toast.error(apiErrorMessage(err));
+    } finally {
+      setMoving(false);
     }
   }
 
@@ -161,6 +193,11 @@ export default function Students() {
                       <CheckCircle2 /> Enable
                     </DropdownMenuItem>
                   ))}
+                {canEdit && (
+                  <DropdownMenuItem onSelect={() => openMove(s)}>
+                    <ArrowRightLeft /> Correct class
+                  </DropdownMenuItem>
+                )}
                 {canEdit && s.face_enrolled && (
                   <DropdownMenuItem onSelect={() => setToResetFace(s)}>
                     <ScanFace /> Reset face
@@ -227,6 +264,74 @@ export default function Students() {
         confirmLabel="Delete"
         onConfirm={() => handleDelete(toDelete)}
       />
+
+      <Dialog open={!!toMove} onOpenChange={(o) => !o && setToMove(null)}>
+        <DialogContent className="max-w-md">
+          <form onSubmit={handleMove} className="space-y-4">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <ArrowRightLeft className="h-5 w-5 text-primary" /> Correct class: {toMove?.name}
+              </DialogTitle>
+              <DialogDescription>
+                Moves the student to another class without recreating the account. Their profile, face, payments and submissions stay
+                as they are, and past attendance keeps its original class and sessions. From now on they follow the new class's
+                timetable. The change is logged.
+              </DialogDescription>
+            </DialogHeader>
+            <p className="text-sm">
+              Current class: <strong>{toMove?.batch || "none"}</strong>
+            </p>
+            <div className="space-y-1.5">
+              <Label>New class</Label>
+              <Select value={move.batch} onValueChange={(batch) => setMove((m) => ({ ...m, batch }))}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Choose the correct class" />
+                </SelectTrigger>
+                <SelectContent>
+                  {batches
+                    .filter((b) => b.code !== toMove?.batch)
+                    .map((b) => (
+                      <SelectItem key={b.id} value={b.code}>
+                        {b.code}
+                        {b.name ? ` · ${b.name}` : ""}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="move-reason">Reason</Label>
+              <Input
+                id="move-reason"
+                required
+                maxLength={500}
+                placeholder="e.g. Registered in the wrong class"
+                value={move.reason}
+                onChange={(e) => setMove((m) => ({ ...m, reason: e.target.value }))}
+              />
+            </div>
+            {moveHistory.length > 0 && (
+              <div className="space-y-1 rounded-md border p-2 text-xs">
+                <p className="font-medium">Previous corrections</p>
+                {moveHistory.map((h) => (
+                  <p key={h.id} className="text-muted-foreground">
+                    {new Date(h.changed_at).toLocaleString()}: {h.old_batch || "none"} → {h.new_batch || "none"} by {h.changed_by_name}
+                    {h.reason ? ` (${h.reason})` : ""}
+                  </p>
+                ))}
+              </div>
+            )}
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setToMove(null)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={moving || !move.batch || !move.reason.trim()}>
+                {moving ? "Saving..." : "Correct class"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       <ConfirmDialog
         open={!!toResetFace}

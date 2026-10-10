@@ -1539,3 +1539,217 @@ class CourseCompletionReport(db.Model):
             "submitted_at": self.submitted_at.isoformat() if self.submitted_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
+
+
+class LecturerAbsence(db.Model):
+    """A recorded lecturer absence or leave (medical, annual, official duty...).
+
+    The sessions it covers are worked out from the timetable when needed
+    (utils/absences.py), narrowed by the optional scope lists: specific
+    timetable rows (sessions), classes (batches), courses and weekdays. An
+    empty list means "all". Covered sessions are *exempted*: students are not
+    marked absent for them and they leave every percentage, while the
+    lecturer's own attendance for them counts as a justified absence.
+
+    `end_date` is the expected last day (NULL = ongoing, return date unknown).
+    Closing the absence early sets `actual_end_date`; cancelling it removes
+    every exemption. Existing attendance rows are never rewritten: rows that
+    fall inside the absence are listed in absence_review_items instead."""
+    __tablename__ = "lecturer_absences"
+
+    REASONS = {
+        "medical_leave": "Medical leave",
+        "annual_leave": "Annual leave",
+        "official_duty": "Official duty",
+        "training": "Training",
+        "emergency_leave": "Emergency leave",
+        "personal_leave": "Personal leave",
+        "other": "Other",
+    }
+    STATUS_LABELS = {"scheduled": "Scheduled", "active": "Active", "completed": "Completed", "cancelled": "Cancelled"}
+
+    id = db.Column(db.Integer, primary_key=True)
+    lecturer_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    start_date = db.Column(db.Date, nullable=False, index=True)
+    end_date = db.Column(db.Date, nullable=True)
+    actual_end_date = db.Column(db.Date, nullable=True)
+    reason = db.Column(db.String(30), nullable=False)
+    custom_reason = db.Column(db.String(200), nullable=True)
+    remarks = db.Column(db.String(1000), nullable=True)
+    justified = db.Column(db.Boolean, nullable=False, default=True)
+
+    timetable_ids = db.Column(db.JSON, nullable=True)
+    batches = db.Column(db.JSON, nullable=True)
+    courses = db.Column(db.JSON, nullable=True)
+    days = db.Column(db.JSON, nullable=True)
+
+    # recorded | closed | cancelled. Scheduled/Active/Completed are derived
+    # from the dates (display_status), so they never go stale.
+    state = db.Column(db.String(20), nullable=False, default="recorded", index=True)
+    cancel_reason = db.Column(db.String(500), nullable=True)
+
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+    closed_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    closed_at = db.Column(db.DateTime, nullable=True)
+    cancelled_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    cancelled_at = db.Column(db.DateTime, nullable=True)
+
+    lecturer = db.relationship("User", foreign_keys=[lecturer_id])
+    created_by = db.relationship("User", foreign_keys=[created_by_id])
+    updated_by = db.relationship("User", foreign_keys=[updated_by_id])
+    closed_by = db.relationship("User", foreign_keys=[closed_by_id])
+    cancelled_by = db.relationship("User", foreign_keys=[cancelled_by_id])
+    events = db.relationship("LecturerAbsenceEvent", back_populates="absence", cascade="all, delete-orphan",
+                             order_by="LecturerAbsenceEvent.created_at")
+    review_items = db.relationship("AbsenceReviewItem", back_populates="absence", cascade="all, delete-orphan")
+
+    @property
+    def reason_label(self) -> str:
+        if self.reason == "other":
+            return self.custom_reason or "Other"
+        return self.REASONS.get(self.reason, self.reason)
+
+    @property
+    def effective_end(self):
+        """Last day covered, or None while ongoing."""
+        return self.actual_end_date or self.end_date
+
+    def covers_date(self, d) -> bool:
+        if self.state == "cancelled" or d < self.start_date:
+            return False
+        end = self.effective_end
+        return end is None or d <= end
+
+    def display_status(self, today=None) -> str:
+        from datetime import date as date_cls
+
+        today = today or date_cls.today()
+        if self.state == "cancelled":
+            return "cancelled"
+        if today < self.start_date:
+            return "scheduled"
+        end = self.effective_end
+        if end is not None and today > end:
+            return "completed"
+        return "active"
+
+    def to_dict(self, today=None):
+        status = self.display_status(today)
+        return {
+            "id": self.id,
+            "lecturer_id": self.lecturer_id,
+            "lecturer_name": self.lecturer.name if self.lecturer else None,
+            "start_date": self.start_date.isoformat(),
+            "end_date": self.end_date.isoformat() if self.end_date else None,
+            "actual_end_date": self.actual_end_date.isoformat() if self.actual_end_date else None,
+            "ongoing": self.effective_end is None,
+            "reason": self.reason,
+            "custom_reason": self.custom_reason,
+            "reason_label": self.reason_label,
+            "remarks": self.remarks,
+            "justified": self.justified,
+            "timetable_ids": self.timetable_ids or [],
+            "batches": self.batches or [],
+            "courses": self.courses or [],
+            "days": self.days or [],
+            "state": self.state,
+            "status": status,
+            "status_label": self.STATUS_LABELS[status],
+            "cancel_reason": self.cancel_reason,
+            "created_by_name": self.created_by.name if self.created_by else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_by_name": self.updated_by.name if self.updated_by else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "closed_by_name": self.closed_by.name if self.closed_by else None,
+            "closed_at": self.closed_at.isoformat() if self.closed_at else None,
+            "cancelled_by_name": self.cancelled_by.name if self.cancelled_by else None,
+            "cancelled_at": self.cancelled_at.isoformat() if self.cancelled_at else None,
+        }
+
+
+class LecturerAbsenceEvent(db.Model):
+    """Audit trail for lecturer absences: one row per create, edit, close,
+    cancel and review decision. Rows are never edited; the actor's name is
+    copied so the trail still reads correctly after an account is removed."""
+    __tablename__ = "lecturer_absence_events"
+
+    id = db.Column(db.Integer, primary_key=True)
+    absence_id = db.Column(db.Integer, db.ForeignKey("lecturer_absences.id", ondelete="CASCADE"), nullable=False, index=True)
+    actor_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    actor_name = db.Column(db.String(200), nullable=True)
+    action = db.Column(db.String(30), nullable=False)  # created | edited | closed | cancelled | review_resolved
+    old_value = db.Column(db.JSON, nullable=True)
+    new_value = db.Column(db.JSON, nullable=True)
+    note = db.Column(db.String(500), nullable=True)
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False)
+
+    absence = db.relationship("LecturerAbsence", back_populates="events")
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "action": self.action,
+            "actor_name": self.actor_name,
+            "old_value": self.old_value,
+            "new_value": self.new_value,
+            "note": self.note,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class AbsenceReviewItem(db.Model):
+    """An attendance row that already existed for a session a lecturer
+    absence covers (typically an absence recorded after the fact). The row is
+    left exactly as it was; an administrator decides here whether the session
+    is exempted (the default) or the recorded status is kept and counted."""
+    __tablename__ = "absence_review_items"
+
+    id = db.Column(db.Integer, primary_key=True)
+    absence_id = db.Column(db.Integer, db.ForeignKey("lecturer_absences.id", ondelete="CASCADE"), nullable=False, index=True)
+    kind = db.Column(db.String(20), nullable=False)  # student | lecturer
+    record_id = db.Column(db.Integer, nullable=False)
+    timetable_id = db.Column(db.Integer, nullable=True)
+    date = db.Column(db.Date, nullable=False)
+    original_status = db.Column(db.String(20), nullable=False)
+    resolution = db.Column(db.String(20), nullable=False, default="pending")  # pending | exempted | kept
+    resolved_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    resolved_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=utcnow)
+
+    absence = db.relationship("LecturerAbsence", back_populates="review_items")
+    resolved_by = db.relationship("User")
+
+    __table_args__ = (
+        db.UniqueConstraint("absence_id", "kind", "record_id", name="uq_absence_review_record"),
+    )
+
+
+class StudentClassChange(db.Model):
+    """Audit log of corrections to a student's registered class (User.batch).
+    Past attendance keeps pointing at the old class's timetable rows, so it
+    is unaffected; this log also tells reports which class a student was in
+    on a past date."""
+    __tablename__ = "student_class_changes"
+
+    id = db.Column(db.Integer, primary_key=True)
+    student_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    old_batch = db.Column(db.String(50), nullable=True)
+    new_batch = db.Column(db.String(50), nullable=True)
+    reason = db.Column(db.String(500), nullable=True)
+    changed_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    changed_by_name = db.Column(db.String(200), nullable=True)
+    changed_at = db.Column(db.DateTime, default=utcnow, nullable=False)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "student_id": self.student_id,
+            "old_batch": self.old_batch,
+            "new_batch": self.new_batch,
+            "reason": self.reason,
+            "changed_by_name": self.changed_by_name,
+            "changed_at": self.changed_at.isoformat() if self.changed_at else None,
+        }

@@ -1,6 +1,7 @@
 from app.models import StudentAttendance
 from app.utils.settings import get_all_settings
-from app.utils.student_status import all_course_keys_for_batch, compute_course_stats, course_records_query
+from app.utils.absences import AbsenceIndex
+from app.utils.student_status import compute_course_stats, course_keys_for_student, course_records_query
 
 
 def build_student_report(student) -> dict:
@@ -15,13 +16,14 @@ def build_student_report(student) -> dict:
         "photo_url": f"/api/uploads/{student.photo_filename}" if student.photo_filename else None,
     }
 
-    course_keys = all_course_keys_for_batch(student.batch) if student.batch else []
+    course_keys = course_keys_for_student(student)
+    index = AbsenceIndex.current()
 
     summary = []
     detailed = []
     totals = {
         "sessions_held": 0, "total_sessions": 0, "on_time": 0, "late": 0,
-        "absent": 0, "present_excused": 0, "effective_absences": 0,
+        "absent": 0, "present_excused": 0, "effective_absences": 0, "exempted_sessions": 0,
     }
 
     for batch, course_name in course_keys:
@@ -38,14 +40,10 @@ def build_student_report(student) -> dict:
         )
         detailed.append({
             "course_name": course_name,
+            "batch": batch,
             "needs_retake": stats["needs_retake"],
             "sessions": [
-                {
-                    "date": r.date.isoformat(),
-                    "status": r.status,
-                    "status_label": StudentAttendance.STATUS_LABELS.get(r.status, r.status),
-                    "remarks": r.remarks,
-                }
+                _session_row(r, index.exempting("student", r, r.timetable_entry, r.date))
                 for r in records
             ],
         })
@@ -55,4 +53,22 @@ def build_student_report(student) -> dict:
         "summary": summary,
         "detailed": detailed,
         "totals": totals,
+    }
+
+
+def _session_row(r, absence) -> dict:
+    if absence is not None:
+        return {
+            "date": r.date.isoformat(),
+            "status": "exempted",
+            "status_label": "Class Session Exempted",
+            "remarks": f"Lecturer unavailable ({absence.reason_label}). Recorded as "
+                       f"{StudentAttendance.STATUS_LABELS.get(r.status, r.status)}; not counted.",
+            "exempted": True,
+        }
+    return {
+        "date": r.date.isoformat(),
+        "status": r.status,
+        "status_label": StudentAttendance.STATUS_LABELS.get(r.status, r.status),
+        "remarks": r.remarks,
     }

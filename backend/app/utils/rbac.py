@@ -36,6 +36,12 @@ CATALOGUE = {
         "view": "See today's lecturer attendance, the check-in QR poster and kiosk link",
         "edit": "Add or change remarks that justify an absence or early leave",
     }),
+    "lecturer_absences": ("Lecturer absences & leave", "Lecturers", {
+        "view": "See recorded lecturer absences, their affected sessions and audit trail",
+        "add": "Record a lecturer absence (exempts the affected class sessions)",
+        "edit": "Edit or close an absence and review attendance recorded during it",
+        "delete": "Cancel an absence (its sessions are no longer exempted)",
+    }),
     "timetable": ("Timetable", "Lecturers", {
         "view": "See the timetable",
         "add": "Add timetable entries",

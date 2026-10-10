@@ -10,6 +10,7 @@ from app.utils.authz import roles_required, current_user
 from app.utils.geo import haversine_distance_m
 from app.utils.kiosk_code import verify_code
 from app.utils.schedule import get_day_classes, day_bounds
+from app.utils.absences import split_day_classes, sync_after_checkin
 from app.utils.settings import get_all_settings, get_setting_float, get_no_class_dates
 from app.utils.status import compute_checkin_status, compute_checkout_status
 from app.utils.validation import clean_text, parse_coords
@@ -73,7 +74,11 @@ def checkin():
     entries = get_day_classes(user.id, today, no_class_dates)
     if not entries:
         return jsonify({"error": "You have no classes scheduled today"}), 400
-    first_start, last_end = day_bounds(entries, today)
+    # Classes covered by a recorded absence don't count toward the times;
+    # checking in on a fully covered day is still allowed (an early return)
+    # and is listed on the absence for an admin to review.
+    teaching, covered = split_day_classes(entries, today)
+    first_start, last_end = day_bounds(teaching or entries, today)
 
     record = Attendance.query.filter_by(lecturer_id=user.id, date=today).first()
     if record and record.checkin_at:
@@ -103,6 +108,8 @@ def checkin():
     except IntegrityError:  # two simultaneous submits raced on the one-row-per-day constraint
         db.session.rollback()
         return jsonify({"error": "You've already checked in for today"}), 409
+    if covered:
+        sync_after_checkin(user.id, today)
     return jsonify(record.to_dict())
 
 

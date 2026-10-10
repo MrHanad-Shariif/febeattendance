@@ -52,7 +52,17 @@ ACTIONS = {
     "admin.delete_course": ("Timetable", "Deleted a course"),
     "admin.update_settings": ("Settings", "Changed system settings"),
 
+    # Lecturer absences
+    "absences.create_absence": ("Lecturer absences", "Recorded a lecturer absence"),
+    "absences.update_absence": ("Lecturer absences", "Edited a lecturer absence"),
+    "absences.close_absence": ("Lecturer absences", "Closed a lecturer absence"),
+    "absences.cancel_absence": ("Lecturer absences", "Cancelled a lecturer absence"),
+    "absences.resolve_review": ("Lecturer absences", "Reviewed attendance recorded during an absence"),
+    "absences.preview_absence": None,
+    "attendance_reports.export_report": ("Reports", "Exported an attendance report (Excel)"),
+
     # Students
+    "admin.correct_student_class": ("Students", "Corrected a student's class"),
     "admin.update_student": ("Students", "Edited a student"),
     "admin.delete_student": ("Students", "Deleted a student"),
     "admin.reset_student_face": ("Students", "Reset a student's registered face"),

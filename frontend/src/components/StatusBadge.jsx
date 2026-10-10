@@ -12,6 +12,10 @@ const VARIANTS = {
   invited: "muted",
   disabled: "danger",
   present: "success",
+  // lecturer absences / exempted sessions
+  lecturer_unavailable: "info",
+  exempted: "muted",
+  justified: "info",
 };
 
 export const STATUS_LABELS = {
@@ -21,6 +25,8 @@ export const STATUS_LABELS = {
   absent: "Absent",
   left_early: "Left early",
   no_checkout: "No check-out",
+  lecturer_unavailable: "Lecturer Unavailable",
+  exempted: "Class Session Exempted",
 };
 
 export default function StatusBadge({ status, label, className }) {

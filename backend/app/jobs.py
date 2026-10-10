@@ -14,6 +14,7 @@ from app.utils.schedule import get_day_classes, day_bounds, get_batch_classes, s
 from app.utils.settings import get_all_settings, get_setting_int, get_no_class_dates
 from app.utils.status import should_mark_absent, should_mark_no_checkout
 from app.utils.student_status import should_mark_student_absent
+from app.utils.absences import AbsenceIndex, split_day_classes
 
 
 def mark_absentees(app):
@@ -22,12 +23,18 @@ def mark_absentees(app):
         now = datetime.now()
         settings = get_all_settings()
         no_class_dates = get_no_class_dates(settings)
+        index = AbsenceIndex()
 
         for lecturer in User.query.filter_by(role="lecturer").all():
             entries = get_day_classes(lecturer.id, today, no_class_dates)
             if not entries:
                 continue
-            first_start, last_end = day_bounds(entries, today)
+            # Classes covered by a recorded absence don't set the check-in
+            # deadline; on a fully covered day the row is still written (as
+            # absent) so the day's history exists, and reports show it as
+            # the recorded absence.
+            teaching, _covered = split_day_classes(entries, today, index)
+            first_start, last_end = day_bounds(teaching or entries, today)
             if not should_mark_absent(first_start, now, settings):
                 continue
 
@@ -76,9 +83,12 @@ def send_checkin_reminders(app):
         today = date.today()
         now = datetime.now()
         no_class_dates = get_no_class_dates(settings)
+        index = AbsenceIndex()
 
         for lecturer in User.query.filter_by(role="lecturer", status="active").all():
             entries = get_day_classes(lecturer.id, today, no_class_dates)
+            # No reminder for classes a recorded absence covers.
+            entries, _covered = split_day_classes(entries, today, index)
             if not entries:
                 continue
             first_start, last_end = day_bounds(entries, today)
@@ -113,6 +123,7 @@ def mark_student_absentees(app):
         now = datetime.now()
         settings = get_all_settings()
         no_class_dates = get_no_class_dates(settings)
+        index = AbsenceIndex()
 
         batches = [b[0] for b in User.query.filter_by(role="student").with_entities(User.batch).distinct().all() if b[0]]
         for batch in batches:
@@ -124,6 +135,8 @@ def mark_student_absentees(app):
             for entry in entries:
                 if entry.lecturer_id is None:
                     continue  # no lecturer assigned, so nobody could open check-in
+                if index.covering(entry, today):
+                    continue  # lecturer unavailable: the session is exempted, nobody is marked absent
                 start_dt, _ = scheduled_datetimes(entry, today)
                 if not should_mark_student_absent(start_dt, now, settings):
                     continue

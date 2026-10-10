@@ -17,6 +17,7 @@ from app.utils.batches import batch_filter, batch_matches
 from app.utils.schedule import get_batch_classes, scheduled_datetimes, teaches_on
 from app.utils.settings import get_all_settings, get_setting_float, get_setting_int, get_no_class_dates
 from app.utils.student_status import compute_student_checkin_status, is_course_blocked
+from app.utils.absences import is_session_exempt
 from app.utils.student_today import get_student_today_rows
 from app.utils.student_report import build_student_report
 from app.utils.validation import parse_coords
@@ -137,6 +138,12 @@ def _open_session(user, timetable_id: int, day: date, settings):
         )
     if not teaches_on(entry, day, get_no_class_dates(settings)):
         raise CheckinRefused("This class is not scheduled today.")
+    if is_session_exempt(entry, day):
+        raise CheckinRefused(
+            "Your lecturer is recorded as unavailable for this session, so it is exempted. "
+            "No check-in is needed and it does not count against your attendance.",
+            409, reason="exempted",
+        )
 
     start_dt, end_dt = scheduled_datetimes(entry, day)
     now = datetime.now()

@@ -42,6 +42,8 @@ def create_app(config_class=Config):
     from app.assignments import assignments_bp
     from app.special_exams import special_exams_bp
     from app.course_completion import course_completion_bp
+    from app.absences import absences_bp
+    from app.attendance_reports import attendance_reports_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(admin_bp)
@@ -62,6 +64,9 @@ def create_app(config_class=Config):
     app.register_blueprint(assignments_bp)
     app.register_blueprint(special_exams_bp)
     app.register_blueprint(course_completion_bp)
+    # Lecturer absences/leave and the session-level attendance reports.
+    app.register_blueprint(absences_bp)
+    app.register_blueprint(attendance_reports_bp)
 
     @app.get("/api/health")
     def health():

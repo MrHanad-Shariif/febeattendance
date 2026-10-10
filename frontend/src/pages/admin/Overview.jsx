@@ -2,26 +2,22 @@ import { useEffect, useMemo, useState } from "react";
 import { Check, Copy, QrCode, Tv } from "lucide-react";
 import { toast } from "sonner";
 import client, { apiErrorMessage } from "@/api/client";
-import StatusBadge, { STATUS_LABELS } from "@/components/StatusBadge.jsx";
 import RemarksCell from "@/components/RemarksCell.jsx";
 import { DataTable, DataTableColumnHeader } from "@/components/data-table";
 import { Alert, PageHeader } from "@/components/page-header";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { formatTime } from "@/lib/utils";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { CATEGORIES, formatDate, todayIso } from "@/lib/attendance";
 
-const STATUSES = ["on_time", "late", "absent", "left_early", "no_checkout", "not_yet"];
+const SUMMARY_CATEGORIES = ["present", "late", "absent", "justified", "left_early", "no_checkout", "not_yet"];
 
-function classesSummary(classes) {
-  if (!classes || classes.length === 0) return "—";
-  if (classes.length === 1) {
-    const c = classes[0];
-    return c.batch ? `${c.course_name} (${c.batch})` : c.course_name;
-  }
-  return `${classes.length} classes`;
-}
-
+/** Lecturer daily report: one row per teaching session (numbered per
+ * lecturer), for today or any past date. */
 export default function Overview() {
+  const [day, setDay] = useState(todayIso());
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -29,12 +25,19 @@ export default function Overview() {
   const [kioskUrl, setKioskUrl] = useState("");
   const [copied, setCopied] = useState(false);
 
-  useEffect(() => {
+  function load() {
+    setLoading(true);
+    setError("");
     client
-      .get("/admin/attendance/today")
-      .then((res) => setRows(res.data))
+      .get("/admin/attendance/daily", { params: { date: day } })
+      .then((res) => setRows(res.data.rows))
       .catch((err) => setError(apiErrorMessage(err)))
       .finally(() => setLoading(false));
+  }
+
+  useEffect(load, [day]);
+
+  useEffect(() => {
     client
       .get("/admin/qrcode.png", { responseType: "blob" })
       .then((res) => setQrUrl(URL.createObjectURL(res.data)))
@@ -45,15 +48,15 @@ export default function Overview() {
       .catch(() => {});
   }, []);
 
-  function handleRemarkSaved(updated) {
-    setRows((prev) => prev.map((r) => (r.id === updated.id ? { ...r, ...updated } : r)));
+  function handleRemarkSaved() {
     toast.success("Remark saved");
+    load();
   }
 
   const counts = useMemo(
     () =>
       rows.reduce((acc, r) => {
-        acc[r.status] = (acc[r.status] || 0) + 1;
+        acc[r.category] = (acc[r.category] || 0) + 1;
         return acc;
       }, {}),
     [rows]
@@ -65,47 +68,75 @@ export default function Overview() {
         accessorKey: "lecturer_name",
         header: ({ column }) => <DataTableColumnHeader column={column} title="Lecturer" />,
         meta: { label: "Lecturer" },
+        filterFn: "equalsString",
         cell: ({ row }) => <span className="font-medium">{row.original.lecturer_name}</span>,
       },
       {
-        id: "classes",
-        accessorFn: (r) => classesSummary(r.classes),
-        header: "Classes today",
+        accessorKey: "session_number",
+        header: "Session",
+        meta: { label: "Session" },
         cell: ({ row }) => (
-          <span title={(row.original.classes || []).map((c) => c.course_name).join(", ")}>
-            {classesSummary(row.original.classes)}
+          <span className="whitespace-nowrap" title={`Session ${row.original.session_number} of ${row.original.sessions_that_day}`}>
+            {row.original.session_number}
           </span>
         ),
       },
       {
-        id: "scheduled",
-        accessorFn: (r) => `${formatTime(r.scheduled_start)} - ${formatTime(r.scheduled_end)}`,
-        header: "Scheduled",
-        cell: ({ getValue }) => <span className="whitespace-nowrap">{getValue()}</span>,
-      },
-      {
-        id: "checkin",
-        accessorFn: (r) => formatTime(r.checkin_at),
-        header: "Checked in",
-      },
-      {
-        id: "checkout",
-        accessorFn: (r) => formatTime(r.checkout_at),
-        header: "Checked out",
-      },
-      {
-        accessorKey: "status",
-        header: ({ column }) => <DataTableColumnHeader column={column} title="Status" />,
-        meta: { label: "Status" },
+        accessorKey: "class_name",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Class" />,
+        meta: { label: "Class" },
         filterFn: "equalsString",
-        cell: ({ row }) => <StatusBadge status={row.original.status} label={row.original.status_label} />,
+      },
+      {
+        accessorKey: "course_name",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Course / subject" />,
+        meta: { label: "Course / subject" },
+      },
+      {
+        accessorKey: "scheduled_time",
+        header: "Scheduled",
+        meta: { label: "Scheduled" },
+        cell: ({ getValue }) => <span className="whitespace-nowrap">{getValue() || "—"}</span>,
+      },
+      { accessorKey: "checkin_at", header: "Check-in", meta: { label: "Check-in" }, cell: ({ getValue }) => getValue() || "--:--" },
+      { accessorKey: "checkout_at", header: "Check-out", meta: { label: "Check-out" }, cell: ({ getValue }) => getValue() || "--:--" },
+      {
+        id: "category",
+        accessorKey: "category",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Status" />,
+        meta: { label: "Status", exportValue: (r) => r.status_label },
+        filterFn: "equalsString",
+        cell: ({ row }) => (
+          <div className="flex flex-wrap items-center gap-1">
+            <Badge variant={CATEGORIES[row.original.category]?.variant} className="whitespace-nowrap">
+              {row.original.status_label}
+            </Badge>
+            {row.original.flagged_for_review && (
+              <Badge variant="outline" className="whitespace-nowrap text-[10px]">
+                Review
+              </Badge>
+            )}
+          </div>
+        ),
+      },
+      {
+        accessorKey: "justification",
+        header: "Justification",
+        meta: { label: "Justification" },
+        cell: ({ getValue }) => getValue() || "",
       },
       {
         id: "remarks",
         accessorFn: (r) => r.remarks || "",
         header: "Remarks",
         enableSorting: false,
-        cell: ({ row }) => <RemarksCell record={row.original} onSaved={handleRemarkSaved} />,
+        meta: { label: "Remarks" },
+        cell: ({ row }) =>
+          row.original.absence_id ? (
+            <span className="text-xs">{row.original.remarks}</span>
+          ) : (
+            <RemarksCell record={{ id: row.original.record_id, remarks: row.original.remarks }} onSaved={handleRemarkSaved} />
+          ),
       },
     ],
     []
@@ -113,7 +144,23 @@ export default function Overview() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Today's attendance" description="Live check-in status for every lecturer teaching today." />
+      <PageHeader
+        title="Lecturer daily attendance"
+        description={`Every teaching session on ${formatDate(day)}, numbered per lecturer. Justified and unjustified absences are shown separately.`}
+        actions={
+          <div className="flex items-center gap-2">
+            <Label htmlFor="daily-date" className="text-xs text-muted-foreground">
+              Date
+            </Label>
+            <Input id="daily-date" type="date" value={day} max={todayIso()} onChange={(e) => e.target.value && setDay(e.target.value)} className="w-40" />
+            {day !== todayIso() && (
+              <Button variant="outline" size="sm" onClick={() => setDay(todayIso())}>
+                Today
+              </Button>
+            )}
+          </div>
+        }
+      />
 
       <div className="grid gap-4 lg:grid-cols-3">
         <Card>
@@ -158,14 +205,17 @@ export default function Overview() {
                 </Button>
               )}
             </div>
-            <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
-              {STATUSES.map((s) => (
-                <div key={s} className="rounded-lg bg-muted/60 px-2 py-2 text-center">
-                  <p className="text-xl font-bold">{counts[s] || 0}</p>
-                  <StatusBadge status={s} className="mt-1 whitespace-nowrap px-1.5 text-[10px]" />
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-7">
+              {SUMMARY_CATEGORIES.map((c) => (
+                <div key={c} className="rounded-lg bg-muted/60 px-2 py-2 text-center">
+                  <p className="text-xl font-bold">{counts[c] || 0}</p>
+                  <Badge variant={CATEGORIES[c].variant} className="mt-1 whitespace-nowrap px-1.5 text-[10px]">
+                    {CATEGORIES[c].label}
+                  </Badge>
                 </div>
               ))}
             </div>
+            <p className="text-xs text-muted-foreground">Counts are per session.</p>
           </CardContent>
         </Card>
       </div>
@@ -176,18 +226,20 @@ export default function Overview() {
         columns={columns}
         data={rows}
         loading={loading}
-        getRowId={(r) => String(r.lecturer_id)}
-        searchPlaceholder="Search lecturers or classes..."
+        getRowId={(r) => `${r.lecturer_id}-${r.date}-${r.session_number}`}
+        searchPlaceholder="Search lecturers, classes or courses..."
         filters={[
+          { columnId: "lecturer_name", label: "Lecturer" },
+          { columnId: "class_name", label: "Class" },
           {
-            columnId: "status",
+            columnId: "category",
             label: "Status",
-            options: STATUSES.map((s) => ({ value: s, label: STATUS_LABELS[s] })),
+            options: Object.entries(CATEGORIES).map(([value, c]) => ({ value, label: c.label })),
           },
         ]}
-        exportName="attendance-today"
-        emptyText="No classes scheduled today."
-        initialVisibility={{}}
+        exportName={`lecturer-daily-${day}`}
+        emptyText="No classes scheduled on this day."
+        pageSize={50}
       />
     </div>
   );

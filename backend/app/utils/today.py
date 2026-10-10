@@ -4,19 +4,24 @@ from app.models import User, Attendance
 from app.utils.schedule import get_day_classes, day_bounds
 from app.utils.settings import get_all_settings, get_no_class_dates
 from app.utils.status import should_mark_absent
+from app.utils.absences import AbsenceIndex, split_day_classes
 
 
-def _classes_payload(entries):
+def _classes_payload(entries, covered=None):
+    covered = covered or {}
     return [
         {
+            "session_number": n,
             "timetable_id": e.id,
             "course_name": e.course_name,
             "batch": e.batch,
             "room": e.room,
             "start_time": e.start_time.strftime("%H:%M") if e.start_time else None,
             "end_time": e.end_time.strftime("%H:%M") if e.end_time else None,
+            "lecturer_unavailable": e.id in covered,
+            "absence_reason": covered[e.id].reason_label if e.id in covered else None,
         }
-        for e in entries
+        for n, e in enumerate(entries, 1)
     ]
 
 
@@ -35,13 +40,15 @@ def get_today_rows(today, lecturer_id: int | None = None) -> list[dict]:
     if lecturer_id:
         query = query.filter_by(id=lecturer_id)
 
+    index = AbsenceIndex.current()
     rows = []
     for lecturer in query.all():
         entries = get_day_classes(lecturer.id, today, no_class_dates)
         if not entries:
             continue
 
-        first_start, last_end = day_bounds(entries, today)
+        teaching, covered = split_day_classes(entries, today, index)
+        first_start, last_end = day_bounds(teaching or entries, today)
         record = Attendance.query.filter_by(lecturer_id=lecturer.id, date=today).first()
 
         if record:
@@ -65,7 +72,13 @@ def get_today_rows(today, lecturer_id: int | None = None) -> list[dict]:
                 "justified": False,
             }
 
-        row["classes"] = _classes_payload(entries)
+        row["classes"] = _classes_payload(entries, covered)
+        if covered:
+            absence = next(iter(covered.values()))
+            row["absence"] = {"id": absence.id, "reason_label": absence.reason_label,
+                              "justified": absence.justified, "all_day": not teaching}
+            if not teaching and absence.justified:
+                row["justified"] = True
         row["sort_key"] = first_start
         rows.append(row)
 

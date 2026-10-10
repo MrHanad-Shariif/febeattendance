@@ -79,7 +79,7 @@ export default function AppLayout() {
         {/* Desktop sidebar */}
         <aside
           className={cn(
-            "fixed inset-y-0 left-0 z-30 hidden border-r border-sidebar-border transition-[width] duration-200 lg:block",
+            "fixed inset-y-0 left-0 z-30 hidden border-r border-sidebar-border transition-[width] duration-200 lg:block print:hidden",
             collapsed ? "w-[68px]" : "w-64"
           )}
         >
@@ -95,8 +95,8 @@ export default function AppLayout() {
           </SheetContent>
         </Sheet>
 
-        <div className={cn("transition-[padding] duration-200", collapsed ? "lg:pl-[68px]" : "lg:pl-64")}>
-          <header className="sticky top-0 z-20 flex h-16 items-center gap-2 border-b bg-background/80 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/70">
+        <div className={cn("transition-[padding] duration-200 print:!pl-0", collapsed ? "lg:pl-[68px]" : "lg:pl-64")}>
+          <header className="sticky top-0 z-20 flex h-16 print:hidden items-center gap-2 border-b bg-background/80 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/70">
             <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setMobileOpen(true)} aria-label="Open menu">
               <Menu />
             </Button>
