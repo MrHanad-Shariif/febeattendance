@@ -63,7 +63,7 @@ def _apply_timezone(app):
 def _register_error_handlers(app):
     @app.errorhandler(ValidationError)
     def handle_validation(err):
-        return jsonify({"error": err.message}), err.status
+        return jsonify({"error": err.message, **(getattr(err, "extra", None) or {})}), err.status
 
     @app.errorhandler(HTTPException)
     def handle_http(err):

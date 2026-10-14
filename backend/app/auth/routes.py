@@ -217,6 +217,28 @@ def verify_email(token):
     return jsonify({"message": "Email confirmed!", "access_token": issue_token(user, session_id), "user": user.to_dict()})
 
 
+@auth_bp.post("/confirm-email-change/<token>")
+@limiter.limit("20/minute")
+def confirm_email_change(token):
+    """Finish an approved email change from the new inbox."""
+    from app.models import ProfileChangeRequest
+    from app.utils.profile import record_change
+
+    req = ProfileChangeRequest.query.filter_by(confirm_token=token, status="awaiting_confirmation").first() \
+        if isinstance(token, str) and token else None
+    if not req or not req.confirm_expires_at or req.confirm_expires_at < datetime.now():
+        return jsonify({"error": "This link is invalid or has expired. Ask for the change again from your profile."}), 400
+    student = req.student
+    if User.query.filter(db.func.lower(User.email) == req.new_value.lower(), User.id != student.id).first():
+        return jsonify({"error": "That address is now used by another account. Contact the faculty office."}), 409
+    old = student.email
+    student.email = req.new_value
+    record_change(student, "email", old, req.new_value, "request", student, req.id)
+    req.status, req.confirmed_at, req.confirm_token = "approved", datetime.now(), None
+    db.session.commit()
+    return jsonify({"message": "Your new email address is confirmed. Use it to sign in from now on."})
+
+
 @auth_bp.post("/resend-verification")
 @limiter.limit("5/hour", key_func=_email_key)
 def resend_verification():

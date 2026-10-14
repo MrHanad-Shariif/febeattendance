@@ -91,6 +91,16 @@ def send_verification_email(user, token: str):
     return _send_if_allowed("account", "Confirm your email address", user.email, html)
 
 
+def send_email_change_confirmation(user, new_email: str, token: str):
+    """Sent to the NEW address: the account switches to it only when the
+    student opens this link."""
+    link = f"{current_app.config['FRONTEND_BASE_URL'].rstrip('/')}/confirm-email-change/{token}"
+    html = (f"<p>Hello {escape(user.name)},</p><p>Your request to use this address for your FEBEMS account was approved. "
+            f"Confirm it to finish:</p><p><a href=\"{escape(link)}\">Confirm my new email address</a></p>"
+            "<p>The link works for 72 hours. Until you confirm, keep signing in with your old address.</p>")
+    return _send_if_allowed("account", "FEBEMS – confirm your new email address", new_email, html)
+
+
 def send_password_reset_email(user, token: str):
     link = f"{current_app.config['FRONTEND_BASE_URL']}/reset-password?token={token}"
     html = f"""

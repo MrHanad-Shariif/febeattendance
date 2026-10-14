@@ -69,6 +69,7 @@ export const NAV_BY_ROLE = {
     { label: "Assignments", icon: NotebookPen, to: "/assignments" },
     { label: "My report", icon: FileBarChart, to: "/student-report" },
     { label: "Special exams", icon: CalendarX2, to: "/special-exams" },
+    { label: "My profile", icon: UserCog, to: "/my-profile" },
   ],
 };
 

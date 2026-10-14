@@ -87,7 +87,20 @@ def update_lecturer(user_id):
 @admin_bp.delete("/lecturers/<int:user_id>")
 @permission_required("lecturers:delete")
 def delete_lecturer(user_id):
+    """Only a lecturer with no attendance history can be deleted; anyone else
+    is disabled instead, so reports and students' records stay intact."""
+    from app.models import PasswordResetToken
+
     user = User.query.filter_by(id=user_id, role="lecturer").first_or_404()
+    entry_ids = [t.id for t in user.timetable_entries]
+    has_history = (Attendance.query.filter_by(lecturer_id=user.id).first() is not None
+                   or (entry_ids and StudentAttendance.query.filter(StudentAttendance.timetable_id.in_(entry_ids)).first()))
+    if has_history:
+        raise ValidationError("This lecturer has attendance history, so deleting them would remove it from the reports. "
+                              "Disable the account instead (Edit > Status: disabled).", status=409)
+    for model in (BoardCodeAttempt, FaceCheckAttempt, BoardSession):
+        model.query.filter(model.timetable_id.in_(entry_ids or [-1])).delete(synchronize_session=False)
+    PasswordResetToken.query.filter_by(user_id=user.id).delete()
     db.session.delete(user)
     db.session.commit()
     return jsonify({"message": "Deleted"})
@@ -126,6 +139,14 @@ def _timetable_fields(data: dict, partial: bool = False) -> dict:
         fields["start_time"] = parse_hhmm(data.get("start_time"), "Start time")
     if wanted("end_time"):
         fields["end_time"] = parse_hhmm(data.get("end_time"), "End time")
+    if data.get("duration_hours") not in (None, ""):
+        # A standard length (1.5, 2, 2.5 or 3 hours) sets the end time.
+        from app.utils.timetable_rules import end_from_duration
+
+        start = fields.get("start_time")
+        if not start:
+            raise ValidationError("Enter the start time to use a duration")
+        fields["end_time"] = end_from_duration(start, data["duration_hours"])
     if wanted("sessions"):
         fields["sessions"] = clean_int(data.get("sessions"), "Sessions", minimum=1, maximum=12, default=1)
     if wanted("semester_total_sessions"):
@@ -168,9 +189,28 @@ def create_timetable_entry():
     lecturer = _optional_lecturer(data.get("lecturer_id"))
 
     entry = Timetable(lecturer_id=lecturer.id if lecturer else None, **_timetable_fields(data))
+    _refuse_clashes(entry, data)
     db.session.add(entry)
     db.session.commit()
     return jsonify(entry.to_dict()), 201
+
+
+CLASH_KEYS = ("lecturer_id", "room", "days", "start_time", "end_time", "duration_hours")
+
+
+def _refuse_clashes(entry, data, exclude_id=None):
+    """No two classes with the same lecturer or room at the same time,
+    unless the admin confirms it is one combined class (confirm_combined)."""
+    from app.utils.timetable_rules import clash_message, find_clashes
+
+    if not entry.start_time:
+        return
+    clashes = find_clashes(entry.lecturer_id, entry.room, entry.day_list(), entry.start_time, entry.end_time,
+                           exclude_id=exclude_id)
+    if clashes and not data.get("confirm_combined"):
+        err = ValidationError(clash_message(clashes), status=409)
+        err.extra = {"clashes": clashes}
+        raise err
 
 
 @admin_bp.put("/timetable/<int:entry_id>")
@@ -184,9 +224,73 @@ def update_timetable_entry(entry_id):
         entry.lecturer_id = lecturer.id if lecturer else None
     for key, value in _timetable_fields(data, partial=True).items():
         setattr(entry, key, value)
+    if entry.start_time and entry.end_time and entry.end_time <= entry.start_time:
+        raise ValidationError("End time must be after the start time")
+    if any(k in data for k in CLASH_KEYS):
+        _refuse_clashes(entry, data, exclude_id=entry.id)
 
     db.session.commit()
     return jsonify(entry.to_dict())
+
+
+@admin_bp.get("/timetable/periods")
+@permission_required("timetable:view")
+def timetable_periods():
+    from app.utils.timetable_rules import STANDARD_DURATIONS, periods
+
+    return jsonify({"periods": periods(), "durations": list(STANDARD_DURATIONS)})
+
+
+@admin_bp.get("/timetable/clashes")
+@permission_required("timetable:view")
+def timetable_clashes():
+    from app.utils.timetable_rules import all_clashes
+
+    return jsonify(all_clashes())
+
+
+@admin_bp.get("/timetable/sessions")
+@permission_required("timetable:view", "reports:view")
+def timetable_sessions():
+    """Planned, held, cancelled and remaining sessions per class and course."""
+    from app.utils.timetable_rules import course_sessions
+
+    return jsonify(course_sessions(batch=request.args.get("batch") or None,
+                                   lecturer_id=request.args.get("lecturer_id", type=int)))
+
+
+@admin_bp.get("/timetable/sessions/export")
+@permission_required("timetable:view", "reports:view")
+def timetable_sessions_export():
+    from app.utils import report_export as rx
+    from app.utils.timetable_rules import course_sessions
+
+    fmt = rx.export_format()
+    data = course_sessions(batch=request.args.get("batch") or None, lecturer_id=request.args.get("lecturer_id", type=int))
+    t = data["totals"]
+    cells = [("Planned sessions", t["planned_sessions"], None), ("Held", t["held_sessions"], "present"),
+             ("Cancelled (lecturer absent)", t["cancelled_sessions"], "exempted"), ("Missed", t["missed_sessions"], "absent"),
+             ("Remaining", t["remaining_sessions"], None), ("Teaching hours", t["teaching_hours"], None),
+             ("Completion", f"{t['completion_percent']}%" if t["completion_percent"] is not None else "-", None)]
+    course_cols = [rx.Column("batch", "Class", 11), rx.Column("course_name", "Course", 30), rx.Column("lecturer_name", "Lecturer", 24),
+                   rx.Column("target_sessions", "Standard", 8, "int"), rx.Column("planned_sessions", "Planned", 8, "int"),
+                   rx.Column("held_sessions", "Held", 7, "int"), rx.Column("cancelled_sessions", "Cancelled", 8, "int"),
+                   rx.Column("missed_sessions", "Missed", 7, "int"), rx.Column("remaining_sessions", "Remaining", 8, "int"),
+                   rx.Column("teaching_hours", "Teaching hours", 9, "num"), rx.Column("completion_percent", "Completion %", 9, "pct")]
+    class_cols = [rx.Column("batch", "Class", 11), rx.Column("course_name", "Course", 28), rx.Column("days", "Days", 12),
+                  rx.Column("time", "Time", 11), rx.Column("duration_hours", "Hours", 6, "num"), rx.Column("room", "Room", 9),
+                  rx.Column("lecturer_name", "Lecturer", 22), rx.Column("planned_sessions", "Planned", 8, "int"),
+                  rx.Column("planned_source", "Planned from", 12), rx.Column("held_sessions", "Held", 7, "int"),
+                  rx.Column("remaining_sessions", "Remaining", 8, "int"), rx.Column("completion_percent", "Completion %", 9, "pct")]
+    note = (f"Planned sessions come from the timetable (meetings in the semester, minus no-class dates) or the admin's "
+            f"setting per class; the faculty standard is {data['target_sessions']}. Held and cancelled are counted up to "
+            f"{data['as_of']}. Cancelled = covered by an official lecturer absence.")
+    tables = [rx.Table("By course", "Sessions by course", course_cols, data["courses"], summary=cells, note=note),
+              rx.Table("By class meeting", "Sessions by timetable row", class_cols, data["classes"])]
+    filters = [f"Class: {request.args['batch']}"] if request.args.get("batch") else []
+    return rx.send(rx.Report("Course Sessions and Completion", "Course_Sessions",
+                             f"{data['semester']['name']} ({data['semester']['from']} – {data['semester']['to']})",
+                             tables, filters=filters), fmt)
 
 
 @admin_bp.delete("/timetable/<int:entry_id>")
@@ -218,7 +322,12 @@ def _uploaded_workbook() -> bytes:
 @permission_required("timetable:add")
 def preview_timetable_upload():
     """Read the workbook and say what the upload would do; nothing is saved."""
-    return jsonify(plan_summary(build_plan(_uploaded_workbook())))
+    from app.utils.timetable_rules import plan_clashes
+
+    plan = build_plan(_uploaded_workbook())
+    summary = plan_summary(plan)
+    summary["clashes"] = plan_clashes(plan["classes"])
+    return jsonify(summary)
 
 
 @admin_bp.post("/timetable/upload")
@@ -846,8 +955,13 @@ def list_students():
 @admin_bp.put("/students/<int:user_id>")
 @permission_required("students:edit")
 def update_student(user_id):
+    from app.utils.profile import clean_value, record_change
+
     student = User.query.filter_by(id=user_id, role="student").first_or_404()
     data = request.get_json(silent=True) or {}
+    actor = current_user()
+    before = {f: getattr(student, f) for f in ("name", "email", "department", "batch", "phone", "program",
+                                               "study_semester", "student_id_number")}
 
     if data.get("name") is not None:
         student.name = clean_text(data["name"], "Name", max_len=200, required=True)
@@ -861,10 +975,18 @@ def update_student(user_id):
         if new_department and new_department not in DEPARTMENTS:
             raise ValidationError("Please select a valid department")
         student.department = new_department
+    if data.get("student_id_number"):
+        student.student_id_number = clean_value("student_id_number", data["student_id_number"], student)
+    for field in ("phone", "program", "study_semester"):
+        if field in data:
+            student_value = data.get(field)
+            setattr(student, field, clean_value(field, student_value, student) if student_value not in (None, "") else None)
     if "batch" in data:
         new_batch = clean_text(data.get("batch"), "Batch", max_len=50)
         if new_batch != student.batch:
             _change_student_class(student, new_batch, None)
+    for field, old in before.items():
+        record_change(student, field, old, getattr(student, field), "admin", actor)
     if "status" in data:
         if data["status"] not in ("active", "disabled"):
             raise ValidationError("Status must be active or disabled")
@@ -872,6 +994,82 @@ def update_student(user_id):
 
     db.session.commit()
     return jsonify(student.to_dict())
+
+
+@admin_bp.get("/profile-requests")
+@permission_required("students:view")
+def list_profile_requests():
+    from app.models import ProfileChangeRequest
+
+    q = ProfileChangeRequest.query
+    if request.args.get("status"):
+        q = q.filter_by(status=request.args["status"])
+    rows = q.order_by(ProfileChangeRequest.created_at.desc()).limit(500).all()
+    pending = ProfileChangeRequest.query.filter_by(status="pending").count()
+    return jsonify({"rows": [r.to_dict() for r in rows], "pending": pending})
+
+
+@admin_bp.get("/students/<int:user_id>/profile-history")
+@permission_required("students:view")
+def student_profile_history(user_id):
+    from app.models import ProfileChange
+
+    User.query.filter_by(id=user_id, role="student").first_or_404()
+    rows = ProfileChange.query.filter_by(user_id=user_id).order_by(ProfileChange.changed_at.desc()).all()
+    return jsonify([r.to_dict() for r in rows])
+
+
+@admin_bp.post("/profile-requests/<int:request_id>/decision")
+@permission_required("students:edit")
+def decide_profile_request(request_id):
+    """approve | reject (a reason is required to reject). An approved email
+    change is applied only once the student confirms the new address."""
+    import secrets as _secrets
+
+    from app.models import ProfileChangeRequest, utcnow
+    from app.utils.email import send_email_change_confirmation
+    from app.utils.notify import notify
+    from app.utils.profile import FIELD_LABELS, clean_value, record_change
+
+    actor = current_user()
+    req = ProfileChangeRequest.query.get_or_404(request_id)
+    if req.status != "pending":
+        raise ValidationError("This request is already decided", status=409)
+    data = request.get_json(silent=True) or {}
+    decision = data.get("decision")
+    comment = clean_text(data.get("comment"), "Comment", max_len=1000)
+    if decision not in ("approve", "reject"):
+        raise ValidationError("decision must be approve or reject")
+    if decision == "reject" and not comment:
+        raise ValidationError("Give the reason, so the student knows why")
+    student = req.student
+    req.reviewer_id, req.reviewed_at, req.review_comment = actor.id, utcnow(), comment
+    label = FIELD_LABELS.get(req.field, req.field)
+    if decision == "reject":
+        req.status = "rejected"
+        title, message = f"Profile change not approved: {label}", f"Your request to change {label.lower()} was not approved. {comment}"
+    else:
+        value = clean_value(req.field, req.new_value, student)  # still valid and unique?
+        if req.field == "email":
+            req.status = "awaiting_confirmation"
+            req.confirm_token = _secrets.token_urlsafe(32)
+            req.confirm_expires_at = datetime.now() + timedelta(hours=72)
+            db.session.flush()
+            send_email_change_confirmation(student, value, req.confirm_token)
+            title = "Email change approved: confirm the new address"
+            message = (f"Open the link sent to {value} to finish. Until then, keep signing in with {student.email}.")
+        else:
+            if req.field == "batch":
+                _change_student_class(student, value, f"Change request #{req.id}: {req.reason}")
+            else:
+                setattr(student, req.field, value)
+            record_change(student, req.field, req.old_value, value, "request", actor, req.id)
+            req.status = "approved"
+            title, message = f"Profile updated: {label}", f"Your {label.lower()} is now '{value}'." + (f" {comment}" if comment else "")
+    notify([student], type="notice", title=title, message=message, link="/my-profile", related_id=req.id,
+           email_subject=f"FEBEMS – {title}"[:255], include_students=True)
+    db.session.commit()
+    return jsonify(req.to_dict())
 
 
 def _change_student_class(student, new_batch, reason):
@@ -919,7 +1117,10 @@ def student_class_history(user_id):
 @admin_bp.delete("/students/<int:user_id>")
 @permission_required("students:delete")
 def delete_student(user_id):
+    from app.models import PasswordResetToken
+
     student = User.query.filter_by(id=user_id, role="student").first_or_404()
+    PasswordResetToken.query.filter_by(user_id=student.id).delete()  # no ON DELETE rule on this table
     db.session.delete(student)
     db.session.commit()
     return jsonify({"message": "Deleted"})

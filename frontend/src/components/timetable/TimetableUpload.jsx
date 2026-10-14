@@ -168,6 +168,20 @@ export default function TimetableUpload({ open, onOpenChange, onDone }) {
               </details>
             )}
 
+            {preview.clashes?.length > 0 && (
+              <details className="rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm" open>
+                <summary className="cursor-pointer font-medium">
+                  {preview.clashes.length} timetable clash{preview.clashes.length === 1 ? "" : "es"} (same lecturer or room at the same time)
+                </summary>
+                <ul className="mt-1 list-disc space-y-0.5 pl-5 text-muted-foreground">
+                  {preview.clashes.map((w) => (
+                    <li key={w}>{w}</li>
+                  ))}
+                </ul>
+                <p className="mt-1 text-xs text-muted-foreground">Combined classes taught together are fine. Fix anything else in the Excel file, or after uploading.</p>
+              </details>
+            )}
+
             {preview.warnings.length > 0 && (
               <details className="text-sm">
                 <summary className="cursor-pointer text-muted-foreground">{preview.warnings.length} row(s) to check</summary>

@@ -28,6 +28,9 @@ class User(db.Model):
 
     # Student-only profile fields (NULL for admin/lecturer rows).
     student_id_number = db.Column(db.String(50), unique=True, nullable=True)
+    phone = db.Column(db.String(30), nullable=True)
+    program = db.Column(db.String(150), nullable=True)  # e.g. BSc Civil Engineering
+    study_semester = db.Column(db.String(30), nullable=True)  # the student's current semester / level
     department = db.Column(db.String(150), nullable=True)
     batch = db.Column(db.String(50), nullable=True)  # matches Timetable.batch, e.g. "BCE08"
     photo_filename = db.Column(db.String(255), nullable=True)
@@ -68,10 +71,86 @@ class User(db.Model):
                 "student_id_number": self.student_id_number,
                 "department": self.department,
                 "batch": self.batch,
+                "phone": self.phone,
+                "program": self.program,
+                "study_semester": self.study_semester,
                 "photo_url": f"/api/uploads/{self.photo_filename}" if self.photo_filename else None,
                 "face_enrolled": self.face is not None,
             })
         return data
+
+
+class ProfileChangeRequest(db.Model):
+    """A student's request to change a profile field that needs approval
+    (name, email, student ID, department, program, class, semester). A new
+    email takes effect only after the student confirms it from that inbox,
+    so a mistyped address can never lock them out."""
+    __tablename__ = "profile_change_requests"
+
+    STATUS_LABELS = {"pending": "Pending review", "approved": "Approved", "rejected": "Rejected",
+                     "cancelled": "Cancelled", "awaiting_confirmation": "Approved: waiting for email confirmation"}
+
+    id = db.Column(db.Integer, primary_key=True)
+    student_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    field = db.Column(db.String(40), nullable=False)
+    old_value = db.Column(db.String(255), nullable=True)
+    new_value = db.Column(db.String(255), nullable=False)
+    reason = db.Column(db.String(1000), nullable=False)
+    status = db.Column(db.String(30), nullable=False, default="pending", index=True)
+    reviewer_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    reviewed_at = db.Column(db.DateTime, nullable=True)
+    review_comment = db.Column(db.String(1000), nullable=True)
+    confirm_token = db.Column(db.String(64), nullable=True, unique=True)
+    confirm_expires_at = db.Column(db.DateTime, nullable=True)
+    confirmed_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False)
+
+    student = db.relationship("User", foreign_keys=[student_id])
+    reviewer = db.relationship("User", foreign_keys=[reviewer_id])
+
+    def to_dict(self):
+        from app.utils.profile import FIELD_LABELS
+
+        return {
+            "id": self.id, "student_id": self.student_id,
+            "student_name": self.student.name if self.student else None,
+            "student_id_number": self.student.student_id_number if self.student else None,
+            "batch": self.student.batch if self.student else None,
+            "field": self.field, "field_label": FIELD_LABELS.get(self.field, self.field),
+            "old_value": self.old_value, "new_value": self.new_value, "reason": self.reason,
+            "status": self.status, "status_label": self.STATUS_LABELS.get(self.status, self.status),
+            "reviewer_name": self.reviewer.name if self.reviewer else None,
+            "reviewed_at": self.reviewed_at.isoformat() if self.reviewed_at else None,
+            "review_comment": self.review_comment,
+            "confirmed_at": self.confirmed_at.isoformat() if self.confirmed_at else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class ProfileChange(db.Model):
+    """Audit trail of every change to a student's profile: who changed which
+    field from what to what, and how (the student, an approved request, or an
+    administrator's correction). Rows are never edited."""
+    __tablename__ = "profile_changes"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    field = db.Column(db.String(40), nullable=False)
+    old_value = db.Column(db.String(255), nullable=True)
+    new_value = db.Column(db.String(255), nullable=True)
+    source = db.Column(db.String(20), nullable=False)  # self | request | admin
+    request_id = db.Column(db.Integer, db.ForeignKey("profile_change_requests.id", ondelete="SET NULL"), nullable=True)
+    changed_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    changed_by_name = db.Column(db.String(200), nullable=True)
+    changed_at = db.Column(db.DateTime, default=utcnow, nullable=False)
+
+    def to_dict(self):
+        from app.utils.profile import FIELD_LABELS
+
+        return {"id": self.id, "field": self.field, "field_label": FIELD_LABELS.get(self.field, self.field),
+                "old_value": self.old_value, "new_value": self.new_value, "source": self.source,
+                "changed_by_name": self.changed_by_name,
+                "changed_at": self.changed_at.isoformat() if self.changed_at else None}
 
 
 class Timetable(db.Model):
@@ -404,6 +483,10 @@ class Setting(db.Model):
         "leave_reminder_days_before": ("2", "Remind a lecturer when this many days of their leave or absence remain, counting the last day (1 = on the last day, 2 = the day before). Use 0 to turn reminders off."),
         "academic_office_contact": ("Academic Office, Faculty of Engineering and Built Environment", "Who lecturers should contact about leave and absences; shown in leave notifications."),
         "class_notice_days_ahead": ("14", "How many days ahead students are told about cancelled classes. Cancellations further away are announced as they come within this window."),
+        "default_course_sessions": ("34", "The faculty's standard number of sessions per course per semester (normally two a week). Reports compare each course's planned sessions from the timetable with this."),
+        "timetable_periods": ("07:30-09:00,09:30-11:00,11:00-12:30,12:45-14:15", "The daily teaching periods (start-end, comma separated). The timetable form offers them as quick choices; classes may still use other times."),
+        "student_profile_self_edit": ("phone", "Profile fields students change themselves, comma separated (name, email, student_id_number, department, program, batch, study_semester, phone)."),
+        "student_profile_approval": ("name,email,student_id_number,department,program,batch,study_semester", "Profile fields students may ask to change; an administrator approves each request. Fields in neither list are read-only."),
         "academic_year_start": ("09-01", "Month and day the academic year starts (MM-DD), used by the Academic year reporting period."),
     }
 

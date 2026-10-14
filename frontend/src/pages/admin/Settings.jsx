@@ -22,6 +22,8 @@ const GENERAL_FIELD_LABELS = {
   semester_end_date: "Semester end date",
   no_class_dates: "No-class dates (comma separated, yyyy-mm-dd)",
   academic_year_start: "Academic year starts (MM-DD)",
+  default_course_sessions: "Standard sessions per course per semester",
+  timetable_periods: "Daily teaching periods (e.g. 07:30-09:00,09:30-11:00)",
 };
 
 // Printed on every PDF and Excel report. The logo is the official asset
@@ -63,6 +65,8 @@ const STUDENT_FIELD_LABELS = {
   face_max_attempts_per_session: "Face scan attempts per class",
   student_lates_equal_absent: "Lates that equal 1 absence",
   student_absence_threshold_percent: "Absence % that blocks check-in / flags retake",
+  student_profile_self_edit: "Profile fields students edit themselves",
+  student_profile_approval: "Profile fields changed by approved request",
 };
 
 const COMMITTEE_FIELD_LABELS = {

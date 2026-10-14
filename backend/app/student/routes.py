@@ -92,6 +92,101 @@ def my_today():
     return jsonify(get_student_today_rows(user, date.today()))
 
 
+@student_bp.get("/profile")
+@roles_required("student")
+def my_profile():
+    """My profile, which fields I can change myself, which need approval,
+    my change requests and the history of changes."""
+    from app.models import Batch, ProfileChange, ProfileChangeRequest
+    from app.utils.constants import DEPARTMENTS
+    from app.utils.profile import FIELD_LABELS, approval_fields, profile_payload, self_edit_fields
+
+    user = current_user()
+    settings = get_all_settings()
+    reqs = ProfileChangeRequest.query.filter_by(student_id=user.id).order_by(ProfileChangeRequest.created_at.desc()).all()
+    history = ProfileChange.query.filter_by(user_id=user.id).order_by(ProfileChange.changed_at.desc()).limit(50).all()
+    return jsonify({
+        "profile": profile_payload(user),
+        "labels": FIELD_LABELS,
+        "self_edit": self_edit_fields(settings),
+        "approval": approval_fields(settings),
+        "requests": [r.to_dict() for r in reqs],
+        "history": [h.to_dict() for h in history],
+        "departments": DEPARTMENTS,
+        "batches": [b.code for b in Batch.query.order_by(Batch.code).all()],
+    })
+
+
+@student_bp.put("/profile")
+@roles_required("student")
+def update_my_profile():
+    """Change the fields students may edit themselves (Settings)."""
+    from app.utils.profile import clean_value, profile_payload, record_change, self_edit_fields
+
+    user = current_user()
+    data = request.get_json(silent=True) or {}
+    allowed = self_edit_fields()
+    blocked = [k for k in data if k not in allowed]
+    if blocked:
+        raise CheckinRefused(f"{blocked[0]} can't be changed here. Send a change request instead.", 403)
+    for field in allowed:
+        if field in data:
+            new = clean_value(field, data[field], user)
+            record_change(user, field, getattr(user, field), new, "self", user)
+            setattr(user, field, new)
+    db.session.commit()
+    return jsonify(profile_payload(user))
+
+
+@student_bp.post("/profile/requests")
+@roles_required("student")
+def request_profile_change():
+    """Ask an administrator to change a field that needs approval."""
+    from app.models import ProfileChangeRequest
+    from app.utils.leave import users_with_permission
+    from app.utils.notify import notify
+    from app.utils.profile import FIELD_LABELS, approval_fields, clean_value
+    from app.utils.validation import clean_text
+
+    user = current_user()
+    data = request.get_json(silent=True) or {}
+    field = data.get("field")
+    if field not in approval_fields():
+        raise CheckinRefused("That field can't be changed by request.", 400)
+    new = clean_value(field, data.get("new_value"), user)
+    if (new or "") == (getattr(user, field) or ""):
+        raise CheckinRefused("That is already the current value.", 400)
+    reason = clean_text(data.get("reason"), "Reason", max_len=1000)
+    if not reason or len(reason) < 5:
+        raise CheckinRefused("Say why the change is needed (e.g. 'Name misspelt at registration').", 400)
+    if ProfileChangeRequest.query.filter(ProfileChangeRequest.student_id == user.id, ProfileChangeRequest.field == field,
+                                         ProfileChangeRequest.status.in_(("pending", "awaiting_confirmation"))).first():
+        raise CheckinRefused(f"You already have an open request for {FIELD_LABELS[field].lower()}. Wait for it, or cancel it.", 409)
+    req = ProfileChangeRequest(student_id=user.id, field=field, old_value=getattr(user, field), new_value=new, reason=reason)
+    db.session.add(req)
+    db.session.flush()
+    notify(users_with_permission("students:edit"), type="notice", title=f"Profile change request: {user.name}",
+           message=f"{FIELD_LABELS[field]}: '{req.old_value or '—'}' → '{new}'. Reason: {reason}",
+           link="/admin/students?tab=requests", related_id=req.id)
+    db.session.commit()
+    return jsonify(req.to_dict()), 201
+
+
+@student_bp.post("/profile/requests/<int:request_id>/cancel")
+@roles_required("student")
+def cancel_profile_request(request_id):
+    from app.models import ProfileChangeRequest
+
+    user = current_user()
+    req = ProfileChangeRequest.query.filter_by(id=request_id, student_id=user.id).first_or_404()
+    if req.status not in ("pending", "awaiting_confirmation"):
+        raise CheckinRefused("This request is already decided.", 409)
+    req.status = "cancelled"
+    req.confirm_token = None
+    db.session.commit()
+    return jsonify(req.to_dict())
+
+
 @student_bp.get("/class-notices")
 @roles_required("student")
 def my_class_notices():

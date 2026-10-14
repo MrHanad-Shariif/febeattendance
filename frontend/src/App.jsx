@@ -10,6 +10,8 @@ import ResetPassword from "./pages/auth/ResetPassword.jsx";
 import ActivateAccount from "./pages/auth/ActivateAccount.jsx";
 import RegisterStudent from "./pages/auth/RegisterStudent.jsx";
 import VerifyEmail from "./pages/auth/VerifyEmail.jsx";
+import ConfirmEmailChange from "./pages/auth/ConfirmEmailChange.jsx";
+import StudentProfile from "./pages/student/Profile.jsx";
 import Kiosk from "./pages/kiosk/Kiosk.jsx";
 
 import Dashboard from "./pages/lecturer/Dashboard.jsx";
@@ -128,6 +130,7 @@ export default function App() {
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<RegisterStudent />} />
       <Route path="/verify-email" element={<VerifyEmail />} />
+      <Route path="/confirm-email-change/:token" element={<ConfirmEmailChange />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/activate" element={<ActivateAccount />} />
@@ -171,6 +174,7 @@ export default function App() {
         <Route path="/student-checkin" element={<QrLanding role="student"><StudentCheckIn /></QrLanding>} />
         <Route path="/student-timetable" element={guard(["student"], <StudentTimetable />)} />
         <Route path="/student-report" element={guard(["student"], <StudentReport />)} />
+        <Route path="/my-profile" element={guard(["student"], <StudentProfile />)} />
         <Route path="/special-exams" element={guard(["student"], <StudentSpecialExams />)} />
 
         {/* Management screens (each needs its RBAC permission; the API checks too) */}

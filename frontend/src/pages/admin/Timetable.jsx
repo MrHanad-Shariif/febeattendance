@@ -19,6 +19,7 @@ import { cn } from "@/lib/utils";
 import CourseCatalogue from "./CourseCatalogue.jsx";
 import BatchWeek from "./BatchWeek.jsx";
 import { BatchList, RoomList } from "./TimetableLists.jsx";
+import { CourseSessions, TimetableClashes } from "@/components/timetable/CourseSessions.jsx";
 import TimetableUpload from "@/components/timetable/TimetableUpload.jsx";
 import { useAuth } from "@/context/AuthContext.jsx";
 
@@ -69,6 +70,11 @@ export default function Timetable() {
   const [courseNames, setCourseNames] = useState([]);
   const [listsLoading, setListsLoading] = useState(true);
   const semester = useSemester();
+  const [clashes, setClashes] = useState([]);
+  const [periods, setPeriods] = useState({ periods: [], durations: [] });
+  useEffect(() => {
+    client.get("/admin/timetable/periods").then((r) => setPeriods(r.data)).catch(() => {});
+  }, []);
 
   function load() {
     setLoading(true);
@@ -105,6 +111,7 @@ export default function Timetable() {
 
   function openAdd() {
     setForm(emptyForm);
+    setClashes([]);
     setFormError("");
     setFormOpen(true);
   }
@@ -136,6 +143,7 @@ export default function Timetable() {
       semester_total_sessions: entry.semester_total_sessions ?? "",
       note: entry.note || "",
     });
+    setClashes([]);
     setFormError("");
     setFormOpen(true);
   }
@@ -156,10 +164,20 @@ export default function Timetable() {
       setFormOpen(false);
       load();
     } catch (err) {
+      setClashes(err.response?.data?.clashes || []);
       setFormError(apiErrorMessage(err));
     } finally {
       setSaving(false);
     }
+  }
+
+  // "1.5", "2" ... hours after the start time, as HH:MM.
+  function endAfter(start, hours) {
+    if (!start) return "";
+    const [hh, mm] = start.split(":").map(Number);
+    const total = hh * 60 + mm + Math.round(Number(hours) * 60);
+    if (total >= 24 * 60) return "";
+    return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
   }
 
   async function handleDelete(entry) {
@@ -297,7 +315,15 @@ export default function Timetable() {
           <TabsTrigger value="courses">Courses & lecturers</TabsTrigger>
           <TabsTrigger value="batches">Batches</TabsTrigger>
           <TabsTrigger value="rooms">Rooms</TabsTrigger>
+          <TabsTrigger value="progress">Sessions & completion</TabsTrigger>
+          <TabsTrigger value="clashes">Clashes</TabsTrigger>
         </TabsList>
+        <TabsContent value="progress">
+          <CourseSessions batches={batches} />
+        </TabsContent>
+        <TabsContent value="clashes">
+          <TimetableClashes key={entries.length} />
+        </TabsContent>
         <TabsContent value="batch">
           <BatchWeek batches={batches} />
         </TabsContent>
@@ -395,6 +421,48 @@ export default function Timetable() {
                   </SelectContent>
                 </Select>
               </Field>
+              {periods.periods.length > 0 && (
+                <Field label="Period (quick choice)">
+                  <Select
+                    value={periods.periods.find((p) => p.start_time === form.start_time && p.end_time === form.end_time)?.label || NONE}
+                    onValueChange={(v) => {
+                      const p = periods.periods.find((x) => x.label === v);
+                      if (p) set({ start_time: p.start_time, end_time: p.end_time });
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Other time" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={NONE}>Other time</SelectItem>
+                      {periods.periods.map((p) => (
+                        <SelectItem key={p.label} value={p.label}>
+                          {p.label}: {p.start_time}–{p.end_time}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+              )}
+              <Field label="Length">
+                <Select
+                  value={periods.durations.find((d) => endAfter(form.start_time, d) === form.end_time)?.toString() || NONE}
+                  onValueChange={(v) => v !== NONE && set({ end_time: endAfter(form.start_time, v) })}
+                  disabled={!form.start_time}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Choose the start time first" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={NONE}>Other (enter the end time)</SelectItem>
+                    {periods.durations.map((d) => (
+                      <SelectItem key={d} value={String(d)}>
+                        {d} hours
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
               <Field label="Start time">
                 <Input type="time" required value={form.start_time} onChange={(e) => set({ start_time: e.target.value })} />
               </Field>
@@ -447,6 +515,19 @@ export default function Timetable() {
             </Field>
 
             {formError && <Alert>{formError}</Alert>}
+            {clashes.length > 0 && (
+              <label className="flex items-start gap-2 rounded-md border border-warning/50 bg-warning/5 p-3 text-sm">
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  checked={!!form.confirm_combined}
+                  onChange={(e) => set({ confirm_combined: e.target.checked })}
+                />
+                <span>
+                  This is one combined class: the same lecturer teaches these classes together, in the same room. Save it anyway.
+                </span>
+              </label>
+            )}
 
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setFormOpen(false)}>

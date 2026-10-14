@@ -146,6 +146,16 @@ def validate_settings(data: dict, current: dict) -> dict[str, str]:
         elif key == "academic_office_contact":
             if not value or len(value) > 200:
                 raise ValidationError("Academic Office contact is required (max 200 characters)")
+        elif key == "default_course_sessions":
+            clean_int(value, "Standard sessions per course", minimum=1, maximum=500)
+        elif key == "timetable_periods":
+            from app.utils.timetable_rules import clean_periods
+
+            value = clean_periods(value)
+        elif key in ("student_profile_self_edit", "student_profile_approval"):
+            from app.utils.profile import clean_field_list
+
+            value = clean_field_list(value)
         elif key == "academic_year_start":
             try:
                 datetime.strptime(f"2000-{value}", "%Y-%m-%d")

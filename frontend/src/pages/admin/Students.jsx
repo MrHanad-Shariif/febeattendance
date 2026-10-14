@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
-import { ArrowRightLeft, Ban, CheckCircle2, FileText, MoreHorizontal, ScanFace, Trash2 } from "lucide-react";
+import { Link, useSearchParams } from "react-router-dom";
+import { ArrowRightLeft, Ban, CheckCircle2, FileText, MoreHorizontal, Pencil, ScanFace, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import client, { apiErrorMessage } from "@/api/client";
 import StatusBadge from "@/components/StatusBadge.jsx";
@@ -16,7 +16,102 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { initials } from "@/lib/utils";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import ProfileRequestsAdmin from "@/components/ProfileRequestsAdmin.jsx";
 import { useAuth } from "@/context/AuthContext.jsx";
+
+const EDIT_FIELDS = [
+  ["name", "Full name"],
+  ["student_id_number", "Student ID"],
+  ["email", "Email address"],
+  ["phone", "Phone number"],
+  ["program", "Program"],
+  ["study_semester", "Semester (1-12)"],
+];
+
+/** Correct a student's record. Every change is kept in the profile history. */
+function EditStudentDialog({ student, onClose, onSaved }) {
+  const [form, setForm] = useState(() => Object.fromEntries([...EDIT_FIELDS.map(([k]) => [k, student[k] || ""]), ["department", student.department || ""]]));
+  const [departments, setDepartments] = useState([]);
+  const [history, setHistory] = useState([]);
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    client.get("/admin/departments").then((r) => setDepartments(r.data)).catch(() => {});
+    client.get(`/admin/students/${student.id}/profile-history`).then((r) => setHistory(r.data)).catch(() => {});
+  }, [student.id]);
+
+  async function submit(e) {
+    e.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      const body = Object.fromEntries(Object.entries(form).filter(([k, v]) => (student[k] || "") !== v));
+      await client.put(`/admin/students/${student.id}`, body);
+      toast.success("Student record updated");
+      onSaved();
+    } catch (err) {
+      setError(apiErrorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-h-[92vh] max-w-lg overflow-y-auto">
+        <form onSubmit={submit} className="space-y-4">
+          <DialogHeader>
+            <DialogTitle>Edit details: {student.name}</DialogTitle>
+            <DialogDescription>Corrections are saved straight away and recorded in the student's profile history. To change the class, use Correct class.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {EDIT_FIELDS.map(([k, label]) => (
+              <div key={k} className="space-y-1.5">
+                <Label>{label}</Label>
+                <Input type={k === "email" ? "email" : "text"} value={form[k]} onChange={(e) => setForm((f) => ({ ...f, [k]: e.target.value }))} />
+              </div>
+            ))}
+            <div className="space-y-1.5">
+              <Label>Department</Label>
+              <Select value={form.department || undefined} onValueChange={(v) => setForm((f) => ({ ...f, department: v }))}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Choose..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {departments.map((d) => (
+                    <SelectItem key={d} value={d}>
+                      {d}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          {error && <Alert>{error}</Alert>}
+          {history.length > 0 && (
+            <div className="max-h-40 space-y-1 overflow-y-auto rounded-md border p-2 text-xs">
+              <p className="font-medium">Profile history</p>
+              {history.map((h) => (
+                <p key={h.id} className="text-muted-foreground">
+                  {new Date(h.changed_at).toLocaleString()}: {h.field_label} {h.old_value || "—"} → {h.new_value || "—"} by {h.changed_by_name} ({h.source})
+                </p>
+              ))}
+            </div>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={saving}>
+              {saving ? "Saving..." : "Save"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 export default function Students() {
   const { can } = useAuth();
@@ -32,6 +127,14 @@ export default function Students() {
   const [move, setMove] = useState({ batch: "", reason: "" });
   const [moveHistory, setMoveHistory] = useState([]);
   const [moving, setMoving] = useState(false);
+  const [params, setParams] = useSearchParams();
+  const [editingStudent, setEditingStudent] = useState(null);
+  const tab = params.get("tab") === "requests" ? "requests" : "students";
+  const [pendingRequests, setPendingRequests] = useState(0);
+  const loadPending = () => client.get("/admin/profile-requests", { params: { status: "pending" } }).then((r) => setPendingRequests(r.data.pending)).catch(() => {});
+  useEffect(() => {
+    loadPending();
+  }, []);
 
   function load() {
     setLoading(true);
@@ -194,6 +297,11 @@ export default function Students() {
                     </DropdownMenuItem>
                   ))}
                 {canEdit && (
+                  <DropdownMenuItem onSelect={() => setEditingStudent(s)}>
+                    <Pencil /> Edit details
+                  </DropdownMenuItem>
+                )}
+                {canEdit && (
                   <DropdownMenuItem onSelect={() => openMove(s)}>
                     <ArrowRightLeft /> Correct class
                   </DropdownMenuItem>
@@ -226,6 +334,25 @@ export default function Students() {
 
       {error && <Alert>{error}</Alert>}
 
+      <Tabs value={tab} onValueChange={(v) => setParams(v === "requests" ? { tab: v } : {})}>
+        <TabsList>
+          <TabsTrigger value="students">Students</TabsTrigger>
+          <TabsTrigger value="requests">
+            Profile change requests
+            {pendingRequests > 0 && <span className="ml-2 rounded-full bg-warning px-1.5 text-xs text-white">{pendingRequests}</span>}
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value="requests" className="mt-4">
+          <ProfileRequestsAdmin
+            canEdit={canEdit}
+            onChanged={() => {
+              loadPending();
+              load();
+            }}
+          />
+        </TabsContent>
+        <TabsContent value="students" className="mt-4">
+
       <DataTable
         columns={columns}
         data={students}
@@ -255,6 +382,19 @@ export default function Students() {
         exportName="students"
         emptyText="No students registered yet."
       />
+        </TabsContent>
+      </Tabs>
+
+      {editingStudent && (
+        <EditStudentDialog
+          student={editingStudent}
+          onClose={() => setEditingStudent(null)}
+          onSaved={() => {
+            setEditingStudent(null);
+            load();
+          }}
+        />
+      )}
 
       <ConfirmDialog
         open={!!toDelete}
