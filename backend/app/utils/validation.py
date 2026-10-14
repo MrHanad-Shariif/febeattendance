@@ -176,7 +176,10 @@ def validate_settings(data: dict, current: dict) -> dict[str, str]:
             if value not in ("on", "off"):
                 raise ValidationError("dean_task_override must be on or off")
         elif key == "face_max_attempts_per_session":
-            clean_int(value, key, minimum=1, maximum=20)
+            attempts = clean_int(value, "Face scan attempts per class", minimum=0)
+            if attempts is None:
+                raise ValidationError("Enter how many face scans are allowed, or choose Unlimited")
+            value = str(attempts)
         elif key == "email_mode":
             if value not in ("on", "paused", "off"):
                 raise ValidationError("email_mode must be on, paused or off")

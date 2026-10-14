@@ -384,7 +384,7 @@ class Setting(db.Model):
         "student_verification_mode": ("both", "Which steps the student check-in asks for: 'both' (class code and location), 'code_only', 'location_only', or 'off'. 'either' behaves like 'both' in the step-by-step check-in."),
         "student_face_verification": ("require", "require = students must pass a live face scan matching their registered face to check in. off = skip the face step."),
         "face_match_threshold": ("0.40", "How similar (0 to 1) a check-in face must be to the registered face. Higher is stricter. 0.36 to 0.50 is sensible."),
-        "face_max_attempts_per_session": ("3", "Unsuccessful face scans allowed per class session before the student must see their lecturer."),
+        "face_max_attempts_per_session": ("3", "Unsuccessful face scans (head turn not confirmed, or face doesn't match) allowed per class session before the student must see their lecturer. 0 means unlimited: students may keep retrying, but their face must still match. Blurry or empty photos never count."),
         "student_lates_equal_absent": ("2", "Every this many Late marks in one course count as one extra Absent toward the attendance percentage."),
         "student_absence_threshold_percent": ("25", "A student who has missed this percentage or more of a course's TOTAL planned sessions for the semester (not just sessions so far) is blocked from further check-ins to it and the course is flagged for retake."),
         "semester_start_date": ("2026-10-01", "First day of the current semester, used to work out each course's total planned sessions for the 25% attendance rule."),
@@ -433,6 +433,14 @@ class FaceCheckAttempt(db.Model):
     date = db.Column(db.Date, nullable=False)
     result = db.Column(db.String(20), nullable=False)  # match | mismatch | no_liveness | bad_image
     score = db.Column(db.Float, nullable=True)
+    # Which check failed (not_frontal, turn_too_small, turn_other_person, no_face, ...)
+    # and what the head-turn check measured; empty on rows from before they were logged.
+    stage = db.Column(db.String(30), nullable=True)
+    direction = db.Column(db.String(10), nullable=True)
+    frontal_yaw = db.Column(db.Float, nullable=True)
+    turn_amount = db.Column(db.Float, nullable=True)
+    turn_similarity = db.Column(db.Float, nullable=True)
+    turn_frames = db.Column(db.Integer, nullable=True)
     created_at = db.Column(db.DateTime, default=utcnow)
 
 

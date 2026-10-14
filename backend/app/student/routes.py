@@ -1,7 +1,7 @@
 import secrets
 from datetime import date, datetime, timedelta
 
-from flask import current_app, request, jsonify
+from flask import current_app, g, request, jsonify
 from sqlalchemy.exc import IntegrityError
 
 from app.student import student_bp
@@ -71,6 +71,7 @@ class CheckinRefused(Exception):
 
 @student_bp.errorhandler(CheckinRefused)
 def _refused(err: CheckinRefused):
+    g.activity_detail = f"Refused: {err.extra.get('reason') or err.message}"
     return jsonify({"error": err.message, **err.extra}), err.status
 
 
@@ -379,31 +380,44 @@ def checkin_complete():
     if steps["face"]:
         if user.face is None:
             raise CheckinRefused(FACE_NOT_ENROLLED_MESSAGE, 403, reason="face_not_enrolled")
+        # 0 = unlimited retries; the face must still match every time.
         max_attempts = get_setting_int("face_max_attempts_per_session", settings)
-        if _failed_face_attempts(user.id, entry.id, day) >= max_attempts:
+        if max_attempts > 0 and _failed_face_attempts(user.id, entry.id, day) >= max_attempts:
             raise CheckinRefused(TOO_MANY_ATTEMPTS_MESSAGE, 429, reason="face_locked")
 
         frontal = face.read_frames(request.files, "frontal", 1)[0]
-        turned = face.read_frames(request.files, "turned", 1)[0]
+        turned = face.read_frames(request.files, "turned", 1, face.MAX_TURNED_FRAMES)
         try:
-            score = face.verify(frontal, turned, ticket["dir"], face.unpack(user.face.embeddings))
+            score, check = face.verify(frontal, turned, ticket["dir"], face.unpack(user.face.embeddings))
         except face.FaceError as err:
-            _log_attempt(user, entry, day, err.reason, None)
+            _log_attempt(user, entry, day, err.reason, None, stage=err.stage, check=err.check)
             raise
 
         matched = score >= get_setting_float("face_match_threshold", settings)
-        _log_attempt(user, entry, day, "match" if matched else "mismatch", score)
+        _log_attempt(user, entry, day, "match" if matched else "mismatch", score,
+                     stage="matched" if matched else "face_mismatch", check=check)
         if not matched:
-            remaining = max_attempts - _failed_face_attempts(user.id, entry.id, day)
-            raise CheckinRefused(FACE_MISMATCH_MESSAGE, 403, reason="face_mismatch", attempts_remaining=max(remaining, 0))
+            remaining = None
+            if max_attempts > 0:
+                remaining = max(max_attempts - _failed_face_attempts(user.id, entry.id, day), 0)
+            raise CheckinRefused(FACE_MISMATCH_MESSAGE, 403, reason="face_mismatch", attempts_remaining=remaining)
 
     record = _record_checkin(user, entry, day, start_dt, end_dt, ticket, settings)
     return jsonify(record.to_dict())
 
 
-def _log_attempt(user, entry, day, result: str, score):
-    db.session.add(FaceCheckAttempt(student_id=user.id, timetable_id=entry.id, date=day, result=result, score=score))
+def _log_attempt(user, entry, day, result: str, score, stage: str = "", check=None):
+    attempt = FaceCheckAttempt(student_id=user.id, timetable_id=entry.id, date=day, result=result, score=score,
+                               stage=stage or None)
+    if check is not None:
+        attempt.direction = check.direction
+        attempt.frontal_yaw = check.frontal_yaw
+        attempt.turn_amount = check.turn
+        attempt.turn_similarity = check.similarity
+        attempt.turn_frames = check.frames
+    db.session.add(attempt)
     db.session.commit()
+    g.activity_detail = f"Face scan: {result}" + (f" ({stage})" if stage else "")
 
 
 def _record_checkin(user, entry, day, start_dt, end_dt, ticket, settings) -> StudentAttendance:

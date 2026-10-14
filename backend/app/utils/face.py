@@ -26,11 +26,16 @@ MAX_SIDE = 960  # downscale before detection; faces fill a selfie frame anyway
 MIN_FACE_PX = 80
 DETECT_SCORE = 0.8
 
-# Head-turn liveness: (nose offset from the eye midpoint) / (eye distance).
-FRONTAL_MAX_YAW = 0.25  # "look straight" frame must be roughly frontal
-TURN_MIN_DELTA = 0.18  # turned frame must move at least this far, the asked way
+# Head-turn liveness: (nose offset from the eye midpoint) / (eye distance),
+# roughly 0.5 * tan(head angle). The browser sends a burst of frames while the
+# student turns, and the check passes if any one of them shows the turn, so a
+# student who turns a little early or late is no longer refused.
+FRONTAL_MAX_YAW = 0.35  # "look straight" frame: within ~35 degrees (phones are often held off-centre)
+TURN_MIN_DELTA = 0.12  # best turned frame must move at least this far (~15 degrees), the asked way
 SAME_PERSON_TURNED = 0.25  # turned vs frontal similarity; profiles score lower
 SAME_PERSON_FRONTAL = 0.45  # enrollment frames must clearly be one person
+MAX_TURNED_FRAMES = 10
+MAX_TURN_EMBEDDINGS = 3  # same-person check on at most this many of the best-turned frames
 
 BUSY_TIMEOUT_SECONDS = 20
 
@@ -42,9 +47,22 @@ _slots = threading.BoundedSemaphore(2)
 class FaceError(ValidationError):
     """A problem with the captured frames the student can fix by retrying."""
 
-    def __init__(self, message: str, reason: str = "bad_image"):
+    def __init__(self, message: str, reason: str = "bad_image", stage: str = "", check: "TurnCheck | None" = None):
         super().__init__(message, status=422)
         self.reason = reason
+        self.stage = stage  # which check failed, for the attempt log
+        self.check = check
+
+
+@dataclass
+class TurnCheck:
+    """What the head-turn check measured, kept on every logged attempt so the
+    thresholds can be tuned from real data."""
+    direction: str
+    frontal_yaw: float
+    frames: int = 0  # turned frames received
+    turn: float | None = None  # best movement the asked way (yaw delta)
+    similarity: float | None = None  # frontal vs the accepted (or best) turned frame
 
 
 @dataclass
@@ -76,10 +94,10 @@ def _decode(image_bytes: bytes):
     import numpy as np
 
     if not image_bytes or len(image_bytes) > MAX_FRAME_BYTES:
-        raise FaceError("The camera image could not be read. Please try again.")
+        raise FaceError("The camera image could not be read. Please try again.", stage="unreadable")
     img = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
     if img is None:
-        raise FaceError("The camera image could not be read. Please try again.")
+        raise FaceError("The camera image could not be read. Please try again.", stage="unreadable")
     h, w = img.shape[:2]
     scale = MAX_SIDE / max(h, w)
     if scale < 1:
@@ -87,10 +105,9 @@ def _decode(image_bytes: bytes):
     return img
 
 
-def _analyze(image_bytes: bytes) -> Face:
-    import numpy as np
-
-    detector, recognizer, detector_lock, recognizer_lock = _load_models()
+def _detect(image_bytes: bytes):
+    """Decode and find the one face. Returns (image, face row, yaw)."""
+    detector, _, detector_lock, _ = _load_models()
     img = _decode(image_bytes)
     h, w = img.shape[:2]
 
@@ -100,29 +117,41 @@ def _analyze(image_bytes: bytes) -> Face:
         _, faces = detector.detect(img)
 
     if faces is None or len(faces) == 0:
-        raise FaceError("We couldn't see your face clearly. Face the camera in good light and try again.")
+        raise FaceError("We couldn't see your face clearly. Face the camera in good light and try again.", stage="no_face")
 
     faces = sorted(faces, key=lambda f: f[2] * f[3], reverse=True)
     largest = faces[0]
     if len(faces) > 1 and faces[1][2] * faces[1][3] > 0.35 * largest[2] * largest[3]:
-        raise FaceError("More than one face is in view. Make sure only you are in front of the camera.")
+        raise FaceError("More than one face is in view. Make sure only you are in front of the camera.", stage="several_faces")
     if min(largest[2], largest[3]) < MIN_FACE_PX:
-        raise FaceError("Your face is too far from the camera. Move a little closer and try again.")
+        raise FaceError("Your face is too far from the camera. Move a little closer and try again.", stage="too_far")
 
     right_eye, left_eye, nose = largest[4:6], largest[6:8], largest[8:10]
     eye_dist = abs(left_eye[0] - right_eye[0]) or 1.0
     yaw = float((nose[0] - (left_eye[0] + right_eye[0]) / 2) / eye_dist)
+    return img, largest, yaw
 
+
+def _embed(img, largest):
+    import numpy as np
+
+    _, recognizer, _, recognizer_lock = _load_models()
     with recognizer_lock:
         aligned = recognizer.alignCrop(img, largest)
         feature = recognizer.feature(aligned).flatten().astype(np.float32)
     norm = np.linalg.norm(feature)
     if not norm:
-        raise FaceError("We couldn't see your face clearly. Face the camera in good light and try again.")
+        raise FaceError("We couldn't see your face clearly. Face the camera in good light and try again.", stage="no_face")
+    return feature / norm
+
+
+def _analyze(image_bytes: bytes) -> Face:
+    img, largest, yaw = _detect(image_bytes)
+    h, w = img.shape[:2]
     x, y, fw, fh = (int(v) for v in largest[:4])
     pad = int(max(fw, fh) * 0.4)
     portrait = img[max(0, y - pad):min(h, y + fh + pad), max(0, x - pad):min(w, x + fw + pad)]
-    return Face(embedding=feature / norm, yaw=yaw, portrait=portrait)
+    return Face(embedding=_embed(img, largest), yaw=yaw, portrait=portrait)
 
 
 def similarity(a, b) -> float:
@@ -135,19 +164,44 @@ def best_match(embedding, enrolled: list) -> float:
     return max((similarity(embedding, e) for e in enrolled), default=0.0)
 
 
-def _check_turn(frontal: Face, turned: Face, direction: str):
+def _check_turn(frontal: Face, turned_frames: list[bytes], direction: str) -> TurnCheck:
+    """Pass if any turned frame shows the head turned the asked way, by the
+    same person. Raises FaceError (with the measurements) otherwise."""
+    check = TurnCheck(direction=direction, frontal_yaw=round(frontal.yaw, 3), frames=len(turned_frames))
     if abs(frontal.yaw) > FRONTAL_MAX_YAW:
-        raise FaceError("For the first photo, look straight at the camera. Please try again.", "no_liveness")
-    delta = turned.yaw - frontal.yaw
-    # Student's own left = image right (unmirrored frame) = positive yaw.
-    wanted = delta if direction == "left" else -delta
-    if wanted < TURN_MIN_DELTA:
+        raise FaceError("For the first photo, look straight at the camera. Please try again.",
+                        "no_liveness", "not_frontal", check)
+
+    candidates = []
+    for frame in turned_frames:
+        try:
+            img, largest, yaw = _detect(frame)
+        except FaceError:
+            continue  # mid-turn blur or turned too far: another frame may still show it
+        delta = yaw - frontal.yaw
+        # Student's own left = image right (unmirrored frame) = positive yaw.
+        candidates.append((delta if direction == "left" else -delta, img, largest))
+    if not candidates:
+        raise FaceError("We lost sight of your face while you turned. Turn your head only a little, "
+                        "keep your face inside the oval, and try again.", "bad_image", "turn_face_lost", check)
+
+    candidates.sort(key=lambda c: c[0], reverse=True)
+    check.turn = round(float(candidates[0][0]), 3)
+    turned_enough = [c for c in candidates if c[0] >= TURN_MIN_DELTA][:MAX_TURN_EMBEDDINGS]
+    if not turned_enough:
         raise FaceError(
-            f"We couldn't confirm the head turn. When asked, slowly turn your head to your {direction} and hold it.",
-            "no_liveness",
+            f"We couldn't confirm the head turn. When asked, turn your head a little to your {direction} "
+            "(as if looking at your shoulder) and hold it until the check starts.",
+            "no_liveness", "turn_too_small", check,
         )
-    if similarity(frontal.embedding, turned.embedding) < SAME_PERSON_TURNED:
-        raise FaceError("The photos don't appear to show the same person. Please try again.", "no_liveness")
+    for _, img, largest in turned_enough:
+        sim = similarity(frontal.embedding, _embed(img, largest))
+        check.similarity = round(max(sim, check.similarity or -1.0), 3)
+        if sim >= SAME_PERSON_TURNED:
+            check.similarity = round(sim, 3)
+            return check
+    raise FaceError("The photos don't appear to show the same person. Please try again.",
+                    "no_liveness", "turn_other_person", check)
 
 
 def _run(fn):
@@ -159,14 +213,15 @@ def _run(fn):
         _slots.release()
 
 
-def read_frames(files, field: str, count: int) -> list[bytes]:
+def read_frames(files, field: str, count: int, maximum: int | None = None) -> list[bytes]:
+    """Exactly ``count`` frames, or ``count`` to ``maximum`` when given."""
     frames = [f.read(MAX_FRAME_BYTES + 1) for f in files.getlist(field)]
-    if len(frames) != count:
+    if not count <= len(frames) <= (maximum or count):
         raise ValidationError("The camera photos were incomplete. Please try again.")
     return frames
 
 
-def enroll(frontal_frames: list[bytes], turned_frame: bytes, direction: str):
+def enroll(frontal_frames: list[bytes], turned_frames: list[bytes], direction: str):
     """Analyse enrollment frames. Returns (embeddings, portrait crop).
     Raises FaceError if the frames aren't one live, clearly visible face."""
     def work():
@@ -174,19 +229,19 @@ def enroll(frontal_frames: list[bytes], turned_frame: bytes, direction: str):
         for other in frontal[1:]:
             if similarity(frontal[0].embedding, other.embedding) < SAME_PERSON_FRONTAL:
                 raise FaceError("The photos don't appear to show the same person. Please try again.")
-        _check_turn(frontal[0], _analyze(turned_frame), direction)
+        _check_turn(frontal[0], turned_frames, direction)
         return [f.embedding for f in frontal], frontal[0].portrait
 
     return _run(work)
 
 
-def verify(frontal_frame: bytes, turned_frame: bytes, direction: str, enrolled: list) -> float:
-    """Liveness-check the frames and return the best similarity to the
-    enrolled embeddings. Raises FaceError for liveness/image problems."""
+def verify(frontal_frame: bytes, turned_frames: list[bytes], direction: str, enrolled: list):
+    """Liveness-check the frames. Returns (best similarity to the enrolled
+    embeddings, TurnCheck). Raises FaceError for liveness/image problems."""
     def work():
         frontal = _analyze(frontal_frame)
-        _check_turn(frontal, _analyze(turned_frame), direction)
-        return best_match(frontal.embedding, enrolled)
+        check = _check_turn(frontal, turned_frames, direction)
+        return best_match(frontal.embedding, enrolled), check
 
     return _run(work)
 

@@ -188,6 +188,45 @@ function EmailStatus({ status }) {
   );
 }
 
+// face_max_attempts_per_session: "0" means unlimited retries (the face must still match).
+function AttemptsField({ value, onChange, disabled }) {
+  const unlimited = value === "0";
+  const [lastLimit, setLastLimit] = useState(unlimited ? "3" : value || "3");
+  return (
+    <div className="flex flex-col gap-2 sm:flex-row">
+      <Select
+        value={unlimited ? "unlimited" : "limited"}
+        onValueChange={(mode) => onChange(mode === "unlimited" ? "0" : lastLimit)}
+        disabled={disabled}
+      >
+        <SelectTrigger id="face_max_attempts_per_session" className="sm:w-64">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="limited">Limited: lock after this many</SelectItem>
+          <SelectItem value="unlimited">Unlimited retries</SelectItem>
+        </SelectContent>
+      </Select>
+      {!unlimited && (
+        <Input
+          type="number"
+          min={1}
+          step={1}
+          inputMode="numeric"
+          aria-label="Unsuccessful face scans allowed"
+          className="sm:w-32"
+          value={value || ""}
+          disabled={disabled}
+          onChange={(e) => {
+            setLastLimit(e.target.value);
+            onChange(e.target.value);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
 function SettingField({ fieldKey, settings, descriptions, setSettings, disabled }) {
   const update = (value) => setSettings((s) => ({ ...s, [fieldKey]: value }));
   return (
@@ -198,6 +237,8 @@ function SettingField({ fieldKey, settings, descriptions, setSettings, disabled 
       <div className="sm:col-span-2">
         {fieldKey === "email_send_days" ? (
           <DaysPicker value={settings[fieldKey]} onChange={update} disabled={disabled} />
+        ) : fieldKey === "face_max_attempts_per_session" ? (
+          <AttemptsField value={settings[fieldKey]} onChange={update} disabled={disabled} />
         ) : SELECT_OPTIONS[fieldKey] ? (
           <Select value={settings[fieldKey] || undefined} onValueChange={update} disabled={disabled}>
             <SelectTrigger id={fieldKey}>

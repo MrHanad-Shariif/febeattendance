@@ -311,10 +311,12 @@ export default function StudentCheckIn() {
       if (data.reason === "face_mismatch" && data.attempts_remaining === 0) {
         setRefusal({ reason: "face_mismatch", title: "Face verification unsuccessful", message: data.error });
         setPhase("refused");
-      } else if (data.reason === "face_mismatch") {
+      } else if (data.reason === "face_mismatch" && data.attempts_remaining != null) {
         setError(
           `${data.error} You have ${data.attempts_remaining} attempt${data.attempts_remaining === 1 ? "" : "s"} left.`
         );
+      } else if (data.reason === "face_mismatch") {
+        setError(data.error);
       } else {
         stepFailed(err, "Face verification failed. Please try again.");
       }

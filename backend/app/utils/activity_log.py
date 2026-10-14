@@ -258,6 +258,6 @@ def init_activity_log(app):
             return response
         area, label = described
         write("action", user=user, session_id=current_session_id(), action=label, area=area,
-              detail=_target(request.view_args), method=request.method, path=request.path,
-              status_code=response.status_code)
+              detail=g.get("activity_detail") or _target(request.view_args), method=request.method,
+              path=request.path, status_code=response.status_code)
         return response

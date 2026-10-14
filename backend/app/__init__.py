@@ -117,6 +117,12 @@ NEW_COLUMNS = [
     ("tasks", "report_challenges", "TEXT"),
     ("tasks", "report_recommendations", "TEXT"),
     ("special_exam_requests", "period_id", "INTEGER REFERENCES special_exam_periods(id) ON DELETE SET NULL"),
+    ("face_check_attempts", "stage", "VARCHAR(30)"),
+    ("face_check_attempts", "direction", "VARCHAR(10)"),
+    ("face_check_attempts", "frontal_yaw", "FLOAT"),
+    ("face_check_attempts", "turn_amount", "FLOAT"),
+    ("face_check_attempts", "turn_similarity", "FLOAT"),
+    ("face_check_attempts", "turn_frames", "INTEGER"),
 ]
 
 # Columns made longer after deployment: (table, column, new type). Postgres

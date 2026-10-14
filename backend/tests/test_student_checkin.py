@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from app.extensions import db
-from app.models import FaceCheckAttempt, StudentAttendance, StudentFace, Timetable
+from app.models import ActivityLog, FaceCheckAttempt, StudentAttendance, StudentFace, Timetable
 from app.utils import face
 from app.utils.checkin_session import make_session_token
 from app.utils.schedule import day_abbr
@@ -55,7 +55,11 @@ def face_score(monkeypatch):
     class Score:
         value = 0.9
 
-    monkeypatch.setattr(face, "verify", lambda frontal, turned, direction, enrolled: Score.value)
+    def verify(frontal, turned, direction, enrolled):
+        Score.turned_frames = len(turned)
+        return Score.value, face.TurnCheck(direction=direction, frontal_yaw=0.02, frames=len(turned), turn=0.3, similarity=0.7)
+
+    monkeypatch.setattr(face, "verify", verify)
     return Score
 
 
@@ -166,6 +170,62 @@ def test_face_mismatch_is_refused_then_locked(client, lecturer, face_score):
     assert StudentAttendance.query.filter_by(student_id=student.id).first() is None
 
 
+def test_unlimited_attempts_never_lock_but_face_must_still_match(client, lecturer, admin, face_score):
+    client.put("/api/admin/settings", json={"face_max_attempts_per_session": "0"}, headers=auth_header(admin))
+    entry, student = _entry(lecturer), _student()
+    face_score.value = 0.1
+    ticket = _through_location(client, student, entry)
+    for _ in range(25):
+        resp = client.post("/api/student/checkin/complete", data=_frames(ticket=ticket), headers=auth_header(student))
+        assert resp.status_code == 403
+        assert resp.json["reason"] == "face_mismatch"
+        assert resp.json["attempts_remaining"] is None
+    assert StudentAttendance.query.filter_by(student_id=student.id).first() is None
+
+    face_score.value = 0.9
+    resp = client.post("/api/student/checkin/complete", data=_frames(ticket=ticket), headers=auth_header(student))
+    assert resp.status_code == 200, resp.json
+    assert StudentAttendance.query.filter_by(student_id=student.id).count() == 1
+
+
+def test_burst_of_turned_frames_is_accepted_and_logged(client, lecturer, face_score):
+    entry, student = _entry(lecturer), _student()
+    ticket = _through_location(client, student, entry)
+    data = {"ticket": ticket, "frontal": (io.BytesIO(b"jpeg"), "f.jpg"),
+            "turned": [(io.BytesIO(b"jpeg"), f"t{i}.jpg") for i in range(7)]}
+    resp = client.post("/api/student/checkin/complete", data=data, headers=auth_header(student))
+    assert resp.status_code == 200, resp.json
+    assert face_score.turned_frames == 7
+    attempt = FaceCheckAttempt.query.filter_by(student_id=student.id).one()
+    assert (attempt.result, attempt.stage, attempt.turn_frames) == ("match", "matched", 7)
+    assert attempt.direction in ("left", "right") and attempt.turn_amount == 0.3
+
+
+def test_too_many_turned_frames_are_rejected(client, lecturer, face_score):
+    entry, student = _entry(lecturer), _student()
+    ticket = _through_location(client, student, entry)
+    data = {"ticket": ticket, "frontal": (io.BytesIO(b"jpeg"), "f.jpg"),
+            "turned": [(io.BytesIO(b"jpeg"), f"t{i}.jpg") for i in range(face.MAX_TURNED_FRAMES + 1)]}
+    resp = client.post("/api/student/checkin/complete", data=data, headers=auth_header(student))
+    assert resp.status_code == 400
+
+
+def test_liveness_failure_is_logged_with_its_stage(client, lecturer, monkeypatch):
+    def verify(frontal, turned, direction, enrolled):
+        check = face.TurnCheck(direction=direction, frontal_yaw=0.01, frames=len(turned), turn=0.05)
+        raise face.FaceError("We couldn't confirm the head turn.", "no_liveness", "turn_too_small", check)
+
+    monkeypatch.setattr(face, "verify", verify)
+    entry, student = _entry(lecturer), _student()
+    ticket = _through_location(client, student, entry)
+    resp = client.post("/api/student/checkin/complete", data=_frames(ticket=ticket), headers=auth_header(student))
+    assert resp.status_code == 422
+    attempt = FaceCheckAttempt.query.filter_by(student_id=student.id).one()
+    assert (attempt.result, attempt.stage, attempt.turn_amount, attempt.turn_frames) == ("no_liveness", "turn_too_small", 0.05, 1)
+    log = ActivityLog.query.filter_by(path="/api/student/checkin/complete").order_by(ActivityLog.id.desc()).first()
+    assert log.detail == "Face scan: no_liveness (turn_too_small)"
+
+
 def test_student_without_face_must_enroll_first(client, lecturer):
     entry, student = _entry(lecturer), _student(enrolled=False)
     resp = client.post("/api/student/checkin/start", json={"s": make_session_token(entry.id, date.today())}, headers=auth_header(student))
@@ -249,7 +309,11 @@ def test_face_settings_are_validated(client, admin):
     put = lambda body: client.put("/api/admin/settings", json=body, headers=auth_header(admin)).status_code
     assert put({"student_face_verification": "maybe"}) == 400
     assert put({"face_match_threshold": "1.5"}) == 400
-    assert put({"face_max_attempts_per_session": "0"}) == 400
+    assert put({"face_max_attempts_per_session": "-1"}) == 400
+    assert put({"face_max_attempts_per_session": ""}) == 400
+    assert put({"face_max_attempts_per_session": "two"}) == 400
+    assert put({"face_max_attempts_per_session": "500"}) == 200  # no upper limit any more
+    assert put({"face_max_attempts_per_session": "0"}) == 200  # 0 = unlimited
     assert put({"face_match_threshold": "0.45", "face_max_attempts_per_session": "5"}) == 200
 
 

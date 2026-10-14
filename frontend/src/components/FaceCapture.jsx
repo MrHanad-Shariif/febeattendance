@@ -7,7 +7,11 @@ import { cn } from "@/lib/utils";
 const FRAME_MAX_SIDE = 640;
 const SETTLE_MS = 900; // let the student look at the camera before the first frame
 const FRAME_GAP_MS = 350;
-const TURN_MS = 2600; // time to turn the head before the turned frame
+// While the student turns, grab a burst of frames; the server accepts the scan
+// if any one of them shows the turn, so turning a little early or late is fine.
+const TURN_FIRST_MS = 700; // reaction time before the first turned frame
+const TURN_FRAMES = 7;
+const TURN_GAP_MS = 400; // last frame ~3.1 s after the prompt
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -38,8 +42,8 @@ function cameraErrorMessage(err) {
 
 /**
  * Live face scan: opens the front camera, captures `frontalCount` frames while
- * the student looks straight, then one frame after they turn their head to
- * `direction` (their own left/right). Calls `onCapture({frontal, turned,
+ * the student looks straight, then a burst of frames while they turn their
+ * head to `direction` (their own left/right). Calls `onCapture({frontal, turned,
  * direction})` with JPEG blobs; the parent uploads them and shows errors via
  * `error`.
  */
@@ -87,8 +91,12 @@ export default function FaceCapture({ frontalCount = 1, direction, onCapture, er
       frontal.push(await grabFrame(video));
     }
     setPhase("turn");
-    await wait(TURN_MS);
-    const turned = await grabFrame(video);
+    await wait(TURN_FIRST_MS);
+    const turned = [];
+    for (let i = 0; i < TURN_FRAMES; i++) {
+      if (i) await wait(TURN_GAP_MS);
+      turned.push(await grabFrame(video));
+    }
     setPhase("uploading");
     try {
       await onCapture({ frontal, turned, direction: turnTo });
@@ -128,7 +136,7 @@ export default function FaceCapture({ frontalCount = 1, direction, onCapture, er
             {phase === "straight" && "Look straight at the camera and hold still"}
             {phase === "turn" && (
               <span className="inline-flex items-center gap-2">
-                <TurnArrow className="h-5 w-5 animate-pulse" /> Now slowly turn your head to your {turnTo}
+                <TurnArrow className="h-5 w-5 animate-pulse" /> Turn your head a little to your {turnTo} and hold
               </span>
             )}
             {phase === "uploading" && (
@@ -142,7 +150,8 @@ export default function FaceCapture({ frontalCount = 1, direction, onCapture, er
 
       {phase === "ready" && (
         <p className="text-center text-sm text-muted-foreground">
-          Face the camera in good light, with only you in view. You'll be asked to turn your head to your <strong>{turnTo}</strong>.
+          Face the camera in good light, with only you in view. You'll be asked to turn your head a little to your{" "}
+          <strong>{turnTo}</strong> (as if looking at your shoulder) and hold it until "Checking..." appears.
         </p>
       )}
 
@@ -161,12 +170,12 @@ export default function FaceCapture({ frontalCount = 1, direction, onCapture, er
   );
 }
 
-// Multipart body for the face endpoints: frontal (one or more), turned, direction, plus `fields`.
+// Multipart body for the face endpoints: frontal and turned (one or more each), direction, plus `fields`.
 export function faceFormData({ frontal, turned, direction }, fields = {}) {
   const data = new FormData();
   Object.entries(fields).forEach(([k, v]) => data.append(k, v));
   frontal.forEach((blob, i) => data.append("frontal", blob, `frontal-${i}.jpg`));
-  data.append("turned", turned, "turned.jpg");
+  turned.forEach((blob, i) => data.append("turned", blob, `turned-${i}.jpg`));
   data.append("direction", direction);
   return data;
 }

@@ -1,6 +1,6 @@
 import io
 
-from flask import request
+from flask import g, request
 from werkzeug.datastructures import FileStorage
 
 from app.extensions import db
@@ -35,18 +35,24 @@ def enroll_student_face(user) -> StudentFace:
     frames (``frontal``) and one head-turned frame (``turned``) in the
     direction given by ``direction``."""
     if user.face is not None:
+        g.activity_detail = "Refused: already registered"
         raise ValidationError(ALREADY_ENROLLED_MESSAGE, status=409)
 
     direction = clean_direction(request.form.get("direction"))
     frontal = face.read_frames(request.files, "frontal", 3)
-    turned = face.read_frames(request.files, "turned", 1)[0]
+    turned = face.read_frames(request.files, "turned", 1, face.MAX_TURNED_FRAMES)
 
-    embeddings, portrait = face.enroll(frontal, turned, direction)
+    try:
+        embeddings, portrait = face.enroll(frontal, turned, direction)
+    except face.FaceError as err:
+        g.activity_detail = f"Face scan: {err.reason}" + (f" ({err.stage})" if err.stage else "")
+        raise
 
     threshold = max(get_setting_float("face_match_threshold"), DUPLICATE_MIN_THRESHOLD)
     for other in StudentFace.query.filter(StudentFace.user_id != user.id).all():
         stored = face.unpack(other.embeddings)
         if any(face.best_match(e, stored) >= threshold for e in embeddings):
+            g.activity_detail = "Refused: face registered to another account"
             raise ValidationError(DUPLICATE_FACE_MESSAGE, status=409)
 
     photo = face.encode_jpeg(portrait)
