@@ -120,6 +120,22 @@ NEW_COLUMNS = [
     ("tasks", "report_recommendations", "TEXT"),
     ("special_exam_requests", "period_id", "INTEGER REFERENCES special_exam_periods(id) ON DELETE SET NULL"),
     ("lecturer_absences", "reminder_sent_for", "DATE"),
+    ("archive_documents", "other_type", "VARCHAR(100)"),
+    ("archive_documents", "status", "VARCHAR(20) NOT NULL DEFAULT 'archived'"),
+    ("archive_documents", "issued_date", "DATE"),
+    ("archive_documents", "archived_at", "TIMESTAMP"),
+    ("archive_documents", "sending_office", "VARCHAR(200)"),
+    ("archive_documents", "recipient", "VARCHAR(500)"),
+    ("archive_documents", "department", "VARCHAR(100)"),
+    ("archive_documents", "prepared_by", "VARCHAR(200)"),
+    ("archive_documents", "approved_by", "VARCHAR(200)"),
+    ("archive_documents", "tags", "VARCHAR(500)"),
+    ("archive_documents", "academic_year", "VARCHAR(20)"),
+    ("archive_documents", "confidential", "BOOLEAN NOT NULL DEFAULT FALSE"),
+    ("archive_documents", "version", "INTEGER NOT NULL DEFAULT 1"),
+    ("archive_documents", "file_sha256", "VARCHAR(64)"),
+    ("archive_documents", "minutes_id", "INTEGER REFERENCES meeting_minutes(id) ON DELETE SET NULL"),
+    ("archive_documents", "updated_by_id", "INTEGER REFERENCES users(id) ON DELETE SET NULL"),
     ("face_check_attempts", "stage", "VARCHAR(30)"),
     ("face_check_attempts", "direction", "VARCHAR(10)"),
     ("face_check_attempts", "frontal_yaw", "FLOAT"),
@@ -137,6 +153,7 @@ WIDENED_COLUMNS = [
 # NOT NULL constraints dropped after deployment: (table, column).
 NULLABLE_COLUMNS = [
     ("timetable", "lecturer_id"),
+    ("archive_documents", "committee_id"),  # office documents need no committee
 ]
 
 # Settings whose old default was replaced: (key, old default, new value).

@@ -324,8 +324,16 @@ def list_minutes():
 
 
 def _minutes_dict(minutes: MeetingMinutes, user) -> dict:
+    from app.models import ArchiveDocument
+    from app.utils.permissions import can_add_to_archive
+    from app.utils.rbac import has_permission
+
     data = minutes.to_dict()
     data["can_edit"] = data["can_delete"] = can_publish_minutes(user, minutes.committee)
+    archived = ArchiveDocument.query.filter_by(minutes_id=minutes.id).first()
+    data["archive_reference"] = archived.reference_no if archived else None
+    data["can_archive"] = archived is None and (can_add_to_archive(user, minutes.committee)
+                                                or has_permission(user, "archive:add"))
     return data
 
 

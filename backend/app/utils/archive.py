@@ -11,23 +11,25 @@ from app.models import ArchiveDocument, Committee, Meeting, Task, User, utcnow
 from app.utils.pdf import FebeDocument, fmt_date, fmt_datetime
 from app.utils.uploads import delete_document, save_generated_document
 
-CATEGORY_CODES = {"memo": "MEMO", "agenda": "AGD", "report": "RPT"}
+CATEGORY_CODES = {"memo": "MEMO", "agenda": "AGD", "minutes": "MIN", "report": "RPT", "other": "DOC"}
 
 
-def committee_code(committee: Committee) -> str:
-    """Initials of the committee name, e.g. 'Quality Assurance Committee' -> 'QAC'."""
-    words = re.findall(r"[A-Za-z0-9]+", committee.name or "")
+def committee_code(committee: Committee | None, office: str | None = None) -> str:
+    """Initials of the committee (or office) name, e.g. 'Quality Assurance Committee' -> 'QAC'."""
+    words = re.findall(r"[A-Za-z0-9]+", (committee.name if committee else office) or "Office")
     code = "".join(w[0] for w in words if w.lower() not in {"of", "and", "the", "for", "&"}).upper()
     return (code or "COM")[:8]
 
 
-def next_reference(committee: Committee, category: str, year: int) -> str:
-    count = ArchiveDocument.query.filter(
-        ArchiveDocument.committee_id == committee.id,
-        ArchiveDocument.category == category,
-        db.extract("year", ArchiveDocument.document_date) == year,
-    ).count()
-    return f"FEBE/{committee_code(committee)}/{CATEGORY_CODES[category]}/{year}/{count + 1:03d}"
+def next_reference(committee: Committee | None, category: str, year: int, office: str | None = None) -> str:
+    """Next free number for this committee (or office), type and year."""
+    prefix = f"FEBE/{committee_code(committee, office)}/{CATEGORY_CODES[category]}/{year}/"
+    taken = {r for (r,) in ArchiveDocument.query.with_entities(ArchiveDocument.reference_no)
+             .filter(ArchiveDocument.reference_no.like(f"{prefix}%")).all()}
+    n = len(taken) + 1
+    while f"{prefix}{n:03d}" in taken:
+        n += 1
+    return f"{prefix}{n:03d}"
 
 
 def _safe_name(text: str) -> str:
@@ -113,17 +115,23 @@ def file_task_report(task: Task, actor: User) -> ArchiveDocument:
 # ---------- Memos ----------
 
 def render_memo(doc: ArchiveDocument) -> bytes:
-    pdf = FebeDocument("Internal Memo", doc.reference_no, doc.committee.name)
-    pdf.title_band(doc.title, doc.document_date)
-    pdf.details([
+    unit = doc.committee.name if doc.committee else (doc.sending_office or "Faculty of Engineering and Built Environment")
+    title = "Internal Memo" + (" - DRAFT" if doc.status == "draft" else "")
+    pdf = FebeDocument(title, doc.reference_no, unit)
+    pdf.title_band(doc.title, doc.issued_date or doc.document_date)
+    pdf.details([row for row in [
         ("To", doc.memo_to),
         ("From", doc.memo_from),
         ("CC", doc.memo_cc),
-        ("Date", fmt_date(doc.document_date)),
+        ("Date", fmt_date(doc.issued_date or doc.document_date)),
         ("Subject", doc.title),
-    ], label_width=30)
+        ("Classification", "CONFIDENTIAL") if doc.confidential else None,
+    ] if row], label_width=30)
     pdf.paragraph(doc.body)
-    pdf.signatures([("Issued by", doc.created_by.name if doc.created_by else None)])
+    pdf.signatures([row for row in [
+        ("Prepared by", doc.prepared_by or (doc.created_by.name if doc.created_by else None)),
+        ("Approved by", doc.approved_by) if doc.approved_by else None,
+    ] if row])
     return pdf.output_bytes()
 
 

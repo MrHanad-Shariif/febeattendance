@@ -173,11 +173,11 @@ export function buildNav(user) {
   if (chairs) {
     committees.push({ label: "Task monitoring", icon: ListChecks, to: "/tasks/monitor" });
   }
-  if (caps.can_view_archive) {
-    committees.push({ label: "Committee archive", icon: Archive, to: "/archive" });
-  }
-
   const groups = [{ label: "Committees", icon: Network, children: committees }];
+  // The archive is its own section: office documents as well as committees'.
+  if (caps.can_view_archive) {
+    groups.push({ label: "Archive", icon: Archive, to: "/archive" });
+  }
   if (caps.is_admin_team || caps.is_dean) {
     groups.push({
       label: "Administration Team",

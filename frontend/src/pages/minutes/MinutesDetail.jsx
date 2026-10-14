@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { Pencil, Printer, Trash2 } from "lucide-react";
+import { Archive, Pencil, Printer, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import client, { apiErrorMessage } from "@/api/client";
 import { MINUTES_DELETE_TEXT, MinutesEditDialog } from "@/components/committees/MinutesEditDialog.jsx";
@@ -20,6 +20,16 @@ export default function MinutesDetail() {
   const [confirm, setConfirm] = useState(false);
   if (error) return <Alert>{error}</Alert>;
   if (!m) return <Skeleton className="h-64 w-full" />;
+
+  async function archive() {
+    try {
+      const res = await client.post(`/archive/minutes/${m.id}`);
+      toast.success(`Archived as ${res.data.reference_no}`);
+      reload();
+    } catch (err) {
+      toast.error(apiErrorMessage(err));
+    }
+  }
 
   async function remove() {
     try {
@@ -41,6 +51,18 @@ export default function MinutesDetail() {
             {m.can_edit && (
               <Button variant="outline" onClick={() => setEditing(true)}>
                 <Pencil /> Edit
+              </Button>
+            )}
+            {m.can_archive && (
+              <Button variant="outline" onClick={archive}>
+                <Archive /> Archive
+              </Button>
+            )}
+            {m.archive_reference && (
+              <Button variant="ghost" asChild>
+                <Link to="/archive?type=minutes">
+                  <Archive /> In the archive: {m.archive_reference}
+                </Link>
               </Button>
             )}
             {m.can_delete && (

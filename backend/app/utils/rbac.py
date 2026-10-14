@@ -42,6 +42,15 @@ CATALOGUE = {
         "edit": "Edit or close an absence and review attendance recorded during it",
         "delete": "Cancel an absence (its sessions are no longer exempted)",
     }),
+    "archive": ("Faculty archive", "Archive", {
+        "view": "Open the faculty archive: office documents and every committee's documents",
+        "add": "File office documents and write memos for an office",
+        "edit": "Edit document details, issue or archive documents and upload new versions",
+        "delete": "Delete documents that were never issued",
+    }),
+    "archive_confidential": ("Confidential documents", "Archive", {
+        "view": "Open documents marked confidential",
+    }),
     "timetable": ("Timetable", "Lecturers", {
         "view": "See the timetable",
         "add": "Add timetable entries",

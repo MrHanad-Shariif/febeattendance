@@ -180,7 +180,54 @@ def can_add_to_archive(user: User, committee: Committee) -> bool:
 
 
 def can_delete_archive_document(user: User, doc: ArchiveDocument) -> bool:
-    return is_admin(user) or (doc.created_by_id == user.id and is_chair(user, doc.committee))
+    """System-filed documents never; committee documents as before; office
+    documents only while still a draft (issued ones are part of the record)."""
+    if doc.meeting_id or doc.task_id or doc.minutes_id:
+        return False
+    if (doc.status or "archived") == "draft" and doc.created_by_id == user.id:
+        return True
+    if doc.committee is not None:
+        # Unchanged committee rule: admins, or the chairperson who filed it.
+        return is_admin(user) or (doc.created_by_id == user.id and is_chair(user, doc.committee))
+    return has_permission(user, "archive:delete") and (doc.status or "archived") == "draft"
+
+
+# ---------- Faculty archive (office documents, confidential records) ----------
+
+def can_view_office_archive(user: User) -> bool:
+    return has_permission(user, "archive:view")
+
+
+def can_file_office_documents(user: User) -> bool:
+    return has_permission(user, "archive:add")
+
+
+def can_view_archive_document(user: User, doc: ArchiveDocument) -> bool:
+    if user.role == "student":
+        return False
+    # Authors keep access to office documents they filed; committee documents
+    # follow the committee's archive rules (a member who completed a task does
+    # not see the committee archive because their report is filed in it).
+    own = doc.committee_id is None and doc.created_by_id == user.id
+    if doc.confidential and not own and not has_permission(user, "archive_confidential:view"):
+        # A committee's own officers still see their committee's confidential papers.
+        if not (doc.committee is not None and is_chair(user, doc.committee)):
+            return False
+    if own or has_permission(user, "archive:view"):
+        return True
+    if doc.committee is not None:
+        return can_view_archive(user, doc.committee)
+    return False
+
+
+def can_edit_archive_document(user: User, doc: ArchiveDocument) -> bool:
+    if not can_view_archive_document(user, doc):
+        return False
+    if has_permission(user, "archive:edit"):
+        return True
+    if doc.committee is not None and can_add_to_archive(user, doc.committee):
+        return True
+    return doc.committee_id is None and doc.created_by_id == user.id and (doc.status or "archived") == "draft"
 
 
 def can_view_notice(user: User, post: InformationPost) -> bool:
@@ -218,7 +265,9 @@ def capabilities(user: User) -> dict:
         # Chairperson or secretary (same permissions).
         "chaired_committee_ids": officer_ids,
         "secretary_committee_ids": sorted(m.committee_id for m in memberships if m.role == "secretary"),
-        "can_view_archive": bool(officer_ids) or can_view_whole_archive(user),
+        "can_view_archive": bool(officer_ids) or can_view_whole_archive(user) or can_view_office_archive(user)
+        or can_file_office_documents(user),
+        "can_file_office_documents": can_file_office_documents(user),
         "member_committee_ids": sorted(m.committee_id for m in memberships),
         "can_review_special_exams": can_view_special_exams(user),
         "can_decide_special_exams": can_decide_special_exams(user),
