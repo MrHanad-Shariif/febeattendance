@@ -5,6 +5,7 @@ import client, { apiErrorMessage } from "@/api/client";
 import { DocumentActions, Field, OptionSelect, useApi } from "@/components/committees/shared";
 import { DataTable, DataTableColumnHeader } from "@/components/data-table";
 import { Alert, PageHeader } from "@/components/page-header";
+import ExportMenu from "@/components/ExportMenu.jsx";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
@@ -240,9 +241,10 @@ export default function SpecialExamReview() {
         actions={
           <>
             <OptionSelect value={exportStatus} onChange={(v) => setExportStatus(v || "all")} options={EXPORT_OPTIONS} className="w-40" />
-            <Button onClick={download} disabled={downloading}>
-              <FileSpreadsheet /> {downloading ? "Preparing..." : "Download Excel"}
+            <Button variant="outline" onClick={download} disabled={downloading} title="Every field, including emails and document names">
+              <FileSpreadsheet /> {downloading ? "Preparing..." : "Full data (.xlsx)"}
             </Button>
+            <ExportMenu url="/special-exams/export" params={exportStatus === "all" ? {} : { status: exportStatus }} name="Special_Exam_Requests" />
           </>
         }
       />

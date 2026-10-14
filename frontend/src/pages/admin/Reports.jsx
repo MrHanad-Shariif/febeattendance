@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import client, { apiErrorMessage } from "@/api/client";
 import { DataTable, DataTableColumnHeader } from "@/components/data-table";
 import { Alert, PageHeader } from "@/components/page-header";
+import ExportMenu from "@/components/ExportMenu.jsx";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -91,8 +92,9 @@ export default function Reports() {
               <Input id="month" type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="w-40" />
             </div>
             <Button variant="outline" onClick={handleExport} disabled={exporting}>
-              <Download /> {exporting ? "Exporting..." : "Full report CSV"}
+              <Download /> {exporting ? "Exporting..." : "CSV"}
             </Button>
+            <ExportMenu url="/admin/attendance/report" params={{ month }} name="Lecturer_Attendance" label="Daily attendance" />
           </>
         }
       />

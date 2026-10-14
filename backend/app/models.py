@@ -398,6 +398,10 @@ class Setting(db.Model):
         "email_send_from": ("", "Earliest time of day emails may go out (HH:MM, campus time). Leave both times empty to send at any hour."),
         "email_send_until": ("", "Emails stop at this time (HH:MM). If it is earlier than the start time the window runs overnight. Outside the window notifications wait and reminders are skipped."),
         "email_send_days": ("Mon,Tue,Wed,Thu,Fri,Sat,Sun", "Days emails may go out. On other days notifications wait for the next sending day and reminders are skipped."),
+        "report_university_name": ("SIMAD University", "University name printed at the top of every PDF and Excel report."),
+        "report_faculty_name": ("Faculty of Engineering and Built Environment (FEBE)", "Faculty name printed under the university name on reports."),
+        "report_footer": ("SIMAD University - Faculty of Engineering and Built Environment", "Text in the footer of every PDF report page, next to the page number."),
+        "academic_year_start": ("09-01", "Month and day the academic year starts (MM-DD), used by the Academic year reporting period."),
     }
 
     def to_dict(self):

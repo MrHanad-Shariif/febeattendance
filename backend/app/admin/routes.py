@@ -699,6 +699,117 @@ def export_attendance():
     )
 
 
+@admin_bp.get("/attendance/report")
+@permission_required("reports:view")
+def lecturer_attendance_report():
+    """Daily lecturer attendance (one row per lecturer per day) for a month,
+    or one day with date=YYYY-MM-DD, as PDF or Excel (format=pdf|xlsx)."""
+    from app.utils import report_export as rx
+
+    fmt = rx.export_format()
+    if request.args.get("date"):
+        start_date = end_date = parse_iso_date(request.args["date"], "Date")
+        period_label = f"{start_date:%A %d %B %Y}"
+    else:
+        month_str = request.args.get("month") or date.today().strftime("%Y-%m")
+        start_date, end_date = _month_bounds(month_str)
+        period_label = f"{start_date:%B %Y}"
+    records = Attendance.query.filter(Attendance.date >= start_date, Attendance.date <= end_date) \
+        .order_by(Attendance.date, Attendance.scheduled_start).all()
+    no_class_dates = get_no_class_dates()
+    index = AbsenceIndex.current()
+    category = {"on_time": "present", "late": "late", "absent": "absent", "left_early": "left_early",
+                "no_checkout": "no_checkout"}
+    rows = []
+    for r in records:
+        classes = get_day_classes(r.lecturer_id, r.date, no_class_dates)
+        justified = bool(r.remarks and r.remarks.strip()) or _day_justified_by_absence(r, no_class_dates, index)
+        late = 0
+        if r.checkin_at and r.scheduled_start and r.status in ("on_time", "late", "left_early", "no_checkout"):
+            late = max(0, int((r.checkin_at - r.scheduled_start).total_seconds() // 60))
+        rows.append({
+            "date": r.date.isoformat(), "lecturer": r.lecturer.name if r.lecturer else "",
+            "classes": "; ".join(f"{e.course_name} ({e.batch})" if e.batch else e.course_name for e in classes),
+            "scheduled_start": r.scheduled_start.strftime("%H:%M") if r.scheduled_start else None,
+            "checkin": r.checkin_at.strftime("%H:%M") if r.checkin_at else None,
+            "scheduled_end": r.scheduled_end.strftime("%H:%M") if r.scheduled_end else None,
+            "checkout": r.checkout_at.strftime("%H:%M") if r.checkout_at else None,
+            "late_minutes": late, "status": Attendance.STATUS_LABELS.get(r.status, r.status),
+            "justified": "Yes" if justified else "No", "remarks": r.remarks,
+            "category": "justified" if r.status == "absent" and justified else category.get(r.status),
+        })
+    cols = [rx.Column("date", "Date", 11), rx.Column("lecturer", "Lecturer", 22), rx.Column("classes", "Classes", 30),
+            rx.Column("scheduled_start", "Starts", 7), rx.Column("checkin", "Checked in", 8),
+            rx.Column("scheduled_end", "Ends", 7), rx.Column("checkout", "Checked out", 8),
+            rx.Column("late_minutes", "Late min.", 8, "int"), rx.Column("status", "Status", 12),
+            rx.Column("justified", "Justified", 9), rx.Column("remarks", "Remarks", 26)]
+    count = lambda label: sum(1 for x in rows if x["status"] == label)
+    summary = [("Lecturer-days", len(rows), None),
+               ("On time", count(Attendance.STATUS_LABELS.get("on_time", "On time")), "present"),
+               ("Late", count(Attendance.STATUS_LABELS.get("late", "Late")), "late"),
+               ("Absent", count(Attendance.STATUS_LABELS.get("absent", "Absent")), "absent"),
+               ("Late minutes", sum(x["late_minutes"] for x in rows), "late")]
+    table = rx.Table("Daily attendance", "Daily Lecturer Attendance", cols, rows, summary=summary, status_col="status",
+                     note="One row per lecturer per day: check-in is measured against the first class of the day.")
+    return rx.send(rx.Report("Daily Lecturer Attendance", "Lecturer_Attendance", period_label, [table]), fmt)
+
+
+@admin_bp.get("/timetable/export")
+@permission_required("timetable:view")
+def export_timetable():
+    """The weekly timetable as PDF or Excel (format=pdf|xlsx); filters
+    batch, lecturer_id, room, day."""
+    from app.utils import report_export as rx
+    from app.utils.batches import members as batch_members
+
+    fmt = rx.export_format()
+    query = Timetable.query.filter(Timetable.start_time.isnot(None))
+    filters = []
+    if request.args.get("lecturer_id"):
+        lecturer = User.query.get(request.args.get("lecturer_id", type=int))
+        query = query.filter(Timetable.lecturer_id == request.args.get("lecturer_id", type=int))
+        filters.append(f"Lecturer: {lecturer.name if lecturer else '?'}")
+    if request.args.get("room"):
+        query = query.filter(Timetable.room == request.args["room"])
+        filters.append(f"Room: {request.args['room']}")
+    entries = query.all()
+    if request.args.get("batch"):
+        b = request.args["batch"]
+        entries = [e for e in entries if e.batch == b or b in batch_members(e.batch)]
+        filters.append(f"Class: {b}")
+    week = ["Sat", "Sun", "Mon", "Tue", "Wed", "Thu", "Fri"]
+    day = request.args.get("day")
+    if day:
+        if day not in week:
+            raise ValidationError("day must be Sat, Sun, Mon, Tue, Wed, Thu or Fri")
+        filters.append(f"Day: {day}")
+    rows = []
+    for e in entries:
+        for d in e.day_list():
+            if day and d != day:
+                continue
+            minutes = None
+            if e.end_time:
+                minutes = (datetime.combine(date.today(), e.end_time) - datetime.combine(date.today(), e.start_time)).seconds // 60
+            rows.append({
+                "day": d, "start": e.start_time.strftime("%H:%M"), "end": e.end_time.strftime("%H:%M") if e.end_time else None,
+                "hours": round(minutes / 60, 2) if minutes else None, "course": e.course_name, "batch": e.batch,
+                "lecturer": e.lecturer.name if e.lecturer else "(unassigned)", "room": e.room,
+                "periods": e.sessions or 1, "semester_total": e.semester_total_sessions,
+            })
+    rows.sort(key=lambda r: (week.index(r["day"]) if r["day"] in week else 9, r["start"], r["batch"] or ""))
+    cols = [rx.Column("day", "Day", 7), rx.Column("start", "Start", 7), rx.Column("end", "End", 7),
+            rx.Column("hours", "Hours", 7, "num"), rx.Column("course", "Course", 30), rx.Column("batch", "Class", 12),
+            rx.Column("lecturer", "Lecturer", 24), rx.Column("room", "Room", 10),
+            rx.Column("periods", "Sessions per meeting", 9, "int"), rx.Column("semester_total", "Planned sessions (semester)", 11, "int")]
+    summary = [("Weekly meetings", len(rows), None), ("Courses", len({(r["course"], r["batch"]) for r in rows}), None),
+               ("Teaching hours per week", round(sum(r["hours"] or 0 for r in rows), 1), None)]
+    settings = get_all_settings()
+    table = rx.Table("Timetable", "Weekly Timetable", cols, rows, summary=summary)
+    return rx.send(rx.Report("Weekly Timetable", "Timetable", settings.get("semester_name") or "Current semester",
+                             [table], filters=filters), fmt)
+
+
 # ---------- QR code ----------
 
 @admin_bp.get("/qrcode.png")
@@ -832,6 +943,16 @@ def reset_student_face(user_id):
 def student_report(user_id):
     student = User.query.filter_by(id=user_id, role="student").first_or_404()
     return jsonify(build_student_report(student))
+
+
+@admin_bp.get("/students/<int:user_id>/report/export")
+@permission_required("students:view", "reports:view")
+def student_report_download(user_id):
+    from app.utils import report_export as rx
+    from app.utils.student_report import student_report_export
+
+    student = User.query.filter_by(id=user_id, role="student").first_or_404()
+    return student_report_export(student, rx.export_format())
 
 
 @admin_bp.get("/courses")

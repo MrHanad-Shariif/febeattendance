@@ -136,7 +136,15 @@ def validate_settings(data: dict, current: dict) -> dict[str, str]:
             continue
         value = "" if raw is None else str(raw).strip()
 
-        if key == "site_name":
+        if key in ("report_university_name", "report_faculty_name", "report_footer"):
+            if not value or len(value) > 200:
+                raise ValidationError("Report names and footer are required (max 200 characters)")
+        elif key == "academic_year_start":
+            try:
+                datetime.strptime(f"2000-{value}", "%Y-%m-%d")
+            except ValueError:
+                raise ValidationError("Academic year start must be a month and day, MM-DD (e.g. 09-01)")
+        elif key == "site_name":
             if not value or len(value) > 100:
                 raise ValidationError("Site name is required (max 100 characters)")
         elif key == "semester_name":

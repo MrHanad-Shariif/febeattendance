@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import client, { apiErrorMessage } from "@/api/client";
 import { DataTable, DataTableColumnHeader } from "@/components/data-table";
 import { Alert, PageHeader } from "@/components/page-header";
+import ExportMenu from "@/components/ExportMenu.jsx";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -798,16 +799,23 @@ export default function LecturerAbsences() {
         title="Lecturer absences & leave"
         description="Record medical leave, official duty, training and other absences. Affected class sessions are exempted from student attendance."
         actions={
-          canAdd && (
-            <Button
-              onClick={() => {
-                setEditing(null);
-                setFormOpen(true);
-              }}
-            >
-              <Plus /> Record absence
-            </Button>
-          )
+          <>
+            <ExportMenu
+              url="/admin/lecturer-absences/export"
+              params={Object.fromEntries(Object.entries(filters).filter(([, v]) => v && v !== ALL))}
+              name="Lecturer_Absences"
+            />
+            {canAdd && (
+              <Button
+                onClick={() => {
+                  setEditing(null);
+                  setFormOpen(true);
+                }}
+              >
+                <Plus /> Record absence
+              </Button>
+            )}
+          </>
         }
       />
 

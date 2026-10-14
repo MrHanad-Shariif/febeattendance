@@ -351,6 +351,35 @@ def _safe_filename(text: str) -> str:
     return "".join(ch if ch.isalnum() else "-" for ch in text).strip("-")[:60] or "report"
 
 
+@course_completion_bp.get("/course-completion/export")
+@permission_required("course_completion:view")
+def export_report():
+    """Branded course completion report (format=pdf|xlsx), all classes or one;
+    lists courses still missing a report for the current semester too."""
+    from app.utils import report_export as rx
+
+    fmt = rx.export_format()
+    semester, class_name = _filters()
+    rows = sorted(_report_rows(semester, class_name), key=lambda r: (r["class_name"] or "", r["course_name"] or ""))
+    for r in rows:
+        r["state"] = "Submitted" if r["submitted"] else "Not submitted"
+        r["category"] = "present" if r["submitted"] else "absent"
+    done = [r for r in rows if r["submitted"]]
+    avg = round(sum(r["completion_percent"] for r in done) / len(done), 1) if done else None
+    cols = [rx.Column("class_name", "Class", 12), rx.Column("course_name", "Course", 32),
+            rx.Column("lecturer_name", "Lecturer", 26), rx.Column("covered_chapters", "Chapters covered", 11, "int"),
+            rx.Column("planned_chapters", "Chapters planned", 11, "int"),
+            rx.Column("completion_percent", "Completion %", 11, "pct"), rx.Column("state", "Report", 13)]
+    summary = [("Courses", len(rows), None), ("Reports submitted", len(done), "present"),
+               ("Not submitted", len(rows) - len(done), "absent"),
+               ("Average completion", f"{avg}%" if avg is not None else "-", None)]
+    table = rx.Table("Course completion", "Course Completion Report", cols, rows, summary=summary, status_col="state",
+                     note="Completion % = chapters covered out of chapters planned, as reported by each lecturer.")
+    filters = [f"Class: {class_name}"] if class_name else ["All classes"]
+    return rx.send(rx.Report("Course Completion Report", "Course_Completion", f"Semester: {semester}", [table],
+                             filters=filters), fmt)
+
+
 @course_completion_bp.get("/course-completion/export.xlsx")
 @permission_required("course_completion:view")
 def export_excel():

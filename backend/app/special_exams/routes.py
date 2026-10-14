@@ -321,6 +321,38 @@ def _excel_text(value):
     return value
 
 
+@special_exams_bp.get("/special-exams/export")
+@roles_required("admin", "lecturer")
+def export_report():
+    """Branded special exam report (format=pdf|xlsx) with the status filter."""
+    from app.utils import report_export as rx
+
+    require(can_view_special_exams(current_user()))
+    fmt = rx.export_format()
+    rows = []
+    for n, r in enumerate(_filtered_query().all(), start=1):
+        rows.append({
+            "n": n, "submitted": r.created_at.strftime("%Y-%m-%d %H:%M") if r.created_at else None,
+            "name": r.full_name, "id_number": r.id_number, "batch": r.batch, "course": r.course_name,
+            "exam_date": r.exam_date.isoformat() if r.exam_date else None, "shift": r.shift, "phone": r.phone,
+            "reason": r.reason, "status": STATUS_LABELS[r.status], "decision_note": r.decision_note,
+            "decided_by": r.decided_by.name if r.decided_by else None,
+            "category": {"approved": "present", "declined": "absent", "pending": "late"}[r.status],
+        })
+    cols = [rx.Column("n", "No.", 5, "int"), rx.Column("submitted", "Submitted", 14), rx.Column("name", "Student", 22),
+            rx.Column("id_number", "ID number", 12), rx.Column("batch", "Batch", 9), rx.Column("course", "Course", 24),
+            rx.Column("exam_date", "Exam date", 11), rx.Column("shift", "Shift", 7), rx.Column("phone", "Phone", 13),
+            rx.Column("reason", "Reason", 30), rx.Column("status", "Status", 10),
+            rx.Column("decision_note", "Decision note", 24), rx.Column("decided_by", "Decided by", 16)]
+    counts = {k: sum(1 for r in rows if r["status"] == STATUS_LABELS[k]) for k in ("pending", "approved", "declined")}
+    summary = [("Requests", len(rows), None), ("Pending", counts["pending"], "late"),
+               ("Approved", counts["approved"], "present"), ("Declined", counts["declined"], "absent")]
+    status = request.args.get("status")
+    table = rx.Table("Special exams", "Special Exam Requests", cols, rows, summary=summary, status_col="status")
+    return rx.send(rx.Report("Special Exam Requests", "Special_Exam_Requests", "All registration periods", [table],
+                             filters=[f"Status: {STATUS_LABELS[status]}"] if status else []), fmt)
+
+
 @special_exams_bp.get("/special-exams/export.xlsx")
 @roles_required("admin", "lecturer")
 def export_excel():

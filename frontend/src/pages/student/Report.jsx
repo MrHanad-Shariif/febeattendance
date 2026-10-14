@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import client, { apiErrorMessage } from "@/api/client";
 import StudentReportView from "@/components/StudentReportView.jsx";
 import { Alert, PageHeader } from "@/components/page-header";
+import ExportMenu from "@/components/ExportMenu.jsx";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export default function StudentReport() {
@@ -19,7 +20,11 @@ export default function StudentReport() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="My attendance report" description="Attendance per course, and whether any course is at risk of a retake." />
+      <PageHeader
+        title="My attendance report"
+        description="Attendance per course, and whether any course is at risk of a retake."
+        actions={<ExportMenu url="/student/report/export" name="My_Attendance_Report" />}
+      />
       {error && <Alert>{error}</Alert>}
       {loading ? (
         <div className="space-y-4">

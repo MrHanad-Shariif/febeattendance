@@ -21,6 +21,15 @@ const GENERAL_FIELD_LABELS = {
   semester_start_date: "Semester start date",
   semester_end_date: "Semester end date",
   no_class_dates: "No-class dates (comma separated, yyyy-mm-dd)",
+  academic_year_start: "Academic year starts (MM-DD)",
+};
+
+// Printed on every PDF and Excel report. The logo is the official asset
+// shipped with the system.
+const REPORT_FIELD_LABELS = {
+  report_university_name: "University name",
+  report_faculty_name: "Faculty name",
+  report_footer: "PDF footer text",
 };
 
 // One campus point and radius for everyone: lecturer and student check-ins
@@ -72,6 +81,7 @@ const EMAIL_HOURS_LABELS = {
 
 const FIELD_LABELS = {
   ...GENERAL_FIELD_LABELS,
+  ...REPORT_FIELD_LABELS,
   ...LOCATION_FIELD_LABELS,
   ...LECTURER_FIELD_LABELS,
   ...STUDENT_FIELD_LABELS,
@@ -80,6 +90,7 @@ const FIELD_LABELS = {
   ...EMAIL_HOURS_LABELS,
 };
 const GENERAL_FIELD_ORDER = Object.keys(GENERAL_FIELD_LABELS);
+const REPORT_FIELD_ORDER = Object.keys(REPORT_FIELD_LABELS);
 const LOCATION_FIELD_ORDER = Object.keys(LOCATION_FIELD_LABELS);
 const LECTURER_FIELD_ORDER = Object.keys(LECTURER_FIELD_LABELS);
 const STUDENT_FIELD_ORDER = Object.keys(STUDENT_FIELD_LABELS);
@@ -364,6 +375,14 @@ export default function Settings() {
                 fields={GENERAL_FIELD_ORDER}
                 {...fieldProps}
               />
+              <div className="mt-4">
+                <SettingsCard
+                  title="Report branding"
+                  description="Names printed at the top and bottom of every downloaded PDF and Excel report, next to the official logo."
+                  fields={REPORT_FIELD_ORDER}
+                  {...fieldProps}
+                />
+              </div>
             </TabsContent>
             <TabsContent value="location">
               <SettingsCard

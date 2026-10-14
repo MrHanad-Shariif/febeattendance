@@ -1,27 +1,21 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { FileSpreadsheet, Printer, Trophy } from "lucide-react";
-import { toast } from "sonner";
+import { Printer, Trophy } from "lucide-react";
 import client, { apiErrorMessage } from "@/api/client";
 import { DataTable, DataTableColumnHeader } from "@/components/data-table";
+import ExportMenu from "@/components/ExportMenu.jsx";
+import PeriodFields, { periodLabel, periodParams, periodReady } from "@/components/PeriodFields.jsx";
 import { Alert, PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SYSTEM_FULL_NAME } from "@/lib/committees";
-import { CATEGORIES, currentMonth, downloadFile, pct, todayIso } from "@/lib/attendance";
+import { CATEGORIES, currentMonth, pct, todayIso } from "@/lib/attendance";
 
 const ALL = "all";
-const PERIODS = [
-  { value: "daily", label: "Daily" },
-  { value: "monthly", label: "Monthly" },
-  { value: "semester", label: "Semester" },
-  { value: "range", label: "Date range" },
-];
 
 function header(title) {
   return ({ column }) => <DataTableColumnHeader column={column} title={title} />;
@@ -138,6 +132,7 @@ export default function AttendanceReports() {
     period: "monthly",
     date: todayIso(),
     month: currentMonth(),
+    year: "",
     from: "",
     to: "",
     lecturer_id: ALL,
@@ -150,27 +145,20 @@ export default function AttendanceReports() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     client.get("/admin/attendance-reports/options").then((res) => setOptions(res.data)).catch(() => {});
   }, []);
 
   const apiParams = useMemo(() => {
-    const p = { period: q.period, view: q.view };
-    if (q.period === "daily") p.date = q.date;
-    if (q.period === "monthly") p.month = q.month;
-    if (q.period === "range" || q.period === "semester") {
-      if (q.from) p.from = q.from;
-      if (q.to) p.to = q.to;
-    }
+    const p = { ...periodParams(q), view: q.view };
     for (const k of ["lecturer_id", "batch", "course"]) if (q[k] !== ALL) p[k] = q[k];
     if (audience === "students" && q.student_id !== ALL) p.student_id = q.student_id;
     if (categories.length) p.category = categories.join(",");
     return p;
   }, [q, categories, audience]);
 
-  const ready = q.period !== "range" || (q.from && q.to);
+  const ready = periodReady(q);
 
   useEffect(() => {
     if (!ready) return;
@@ -186,18 +174,6 @@ export default function AttendanceReports() {
       .finally(() => setLoading(false));
   }, [apiParams, audience, ready]);
 
-  async function exportExcel() {
-    setExporting(true);
-    try {
-      await downloadFile("/admin/attendance-reports/export", { ...apiParams, audience }, `${audience}-attendance.xlsx`);
-      toast.success("Excel report downloaded");
-    } catch (err) {
-      toast.error(apiErrorMessage(err, "Export failed"));
-    } finally {
-      setExporting(false);
-    }
-  }
-
   const set = (patch) => setQ((s) => ({ ...s, ...patch }));
   const columns =
     q.view === "summary" ? (audience === "lecturers" ? LECTURER_SUMMARY : STUDENT_SUMMARY) : audience === "lecturers" ? LECTURER_DETAIL : STUDENT_DETAIL;
@@ -209,7 +185,7 @@ export default function AttendanceReports() {
       <div className="hidden print:block">
         <p className="text-sm font-semibold text-primary">{SYSTEM_FULL_NAME}</p>
         <h1 className="text-xl font-bold">
-          {PERIODS.find((p) => p.value === q.period)?.label} {audience === "lecturers" ? "lecturer" : "student"} attendance report ({q.view})
+          {periodLabel(q.period)} {audience === "lecturers" ? "lecturer" : "student"} attendance report ({q.view})
         </h1>
         <p className="text-sm">
           {data?.label} · {data?.scope} · generated {data?.generated_at?.replace("T", " ")}
@@ -219,7 +195,7 @@ export default function AttendanceReports() {
       <div className="print:hidden">
         <PageHeader
           title="Attendance reports"
-          description="Daily, monthly and semester attendance for lecturers and students. Summary or detailed, with Excel export."
+          description="Attendance for lecturers and students by day, week, month, semester or any dates. Summary or detailed, downloadable as PDF or Excel."
           actions={
             <>
               <Button variant="outline" asChild>
@@ -230,9 +206,12 @@ export default function AttendanceReports() {
               <Button variant="outline" onClick={() => window.print()}>
                 <Printer /> Print
               </Button>
-              <Button onClick={exportExcel} disabled={exporting || !ready}>
-                <FileSpreadsheet /> {exporting ? "Preparing..." : "Export Excel"}
-              </Button>
+              <ExportMenu
+                url="/admin/attendance-reports/export"
+                params={{ ...apiParams, audience }}
+                name={`${audience === "lecturers" ? "Lecturer" : "Student"}_Attendance`}
+                disabled={!ready}
+              />
             </>
           }
         />
@@ -255,45 +234,7 @@ export default function AttendanceReports() {
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Period</Label>
-            <Select value={q.period} onValueChange={(v) => set({ period: v })}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {PERIODS.map((p) => (
-                  <SelectItem key={p.value} value={p.value}>
-                    {p.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          {q.period === "daily" && (
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Date</Label>
-              <Input type="date" value={q.date} onChange={(e) => e.target.value && set({ date: e.target.value })} />
-            </div>
-          )}
-          {q.period === "monthly" && (
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Month</Label>
-              <Input type="month" value={q.month} onChange={(e) => e.target.value && set({ month: e.target.value })} />
-            </div>
-          )}
-          {(q.period === "range" || q.period === "semester") && (
-            <>
-              <div className="space-y-1">
-                <Label className="text-xs text-muted-foreground">From{q.period === "semester" ? " (default: semester start)" : ""}</Label>
-                <Input type="date" value={q.from} onChange={(e) => set({ from: e.target.value })} />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs text-muted-foreground">To{q.period === "semester" ? " (default: semester end)" : ""}</Label>
-                <Input type="date" value={q.to} onChange={(e) => set({ to: e.target.value })} />
-              </div>
-            </>
-          )}
+          <PeriodFields q={q} set={set} />
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Lecturer</Label>
             <Select value={q.lecturer_id} onValueChange={(v) => set({ lecturer_id: v })}>
@@ -410,7 +351,7 @@ export default function AttendanceReports() {
       </p>
       {data?.truncated && (
         <Alert variant="success">
-          Showing the first {data.rows.length} of {data.total_rows} rows. The Excel export contains every row.
+          Showing the first {data.rows.length} of {data.total_rows} rows. The Excel download contains every row.
         </Alert>
       )}
 

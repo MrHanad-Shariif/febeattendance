@@ -19,6 +19,15 @@ BRAND = "15803D"
 FACULTY = "Faculty of Engineering and Built Environment (FEBE)"
 SYSTEM = "FEBEMS — Faculty of Engineering and Built Environment Management System"
 
+# Optional 4th element of a column tuple: how its numbers are shown. Values
+# stay numbers, so the sheet can be sorted, filtered and summed.
+NUMBER_FORMATS = {
+    "int": "0",
+    "num": "0.0",
+    "pct": '0.0"%"',  # values are already percentages (85.3 means 85.3 %)
+    "date": "yyyy-mm-dd",
+}
+
 CATEGORY_FILLS = {
     "present": "DCFCE7",
     "late": "FEF3C7",
@@ -42,10 +51,22 @@ BOLD = Font(bold=True)
 FILLS = {k: PatternFill("solid", fgColor=v) for k, v in CATEGORY_FILLS.items()}
 
 
-def _heading(ws, title: str, period_label: str, ncols: int, generated: datetime, scope: str | None):
-    lines = [
-        (SYSTEM, Font(bold=True, size=11, color=BRAND)),
-        (FACULTY, Font(size=10, color="374151")),
+def _safe(value):
+    """Text starting with = + - @ would run as a formula in Excel."""
+    if isinstance(value, str) and value[:1] in ("=", "+", "-", "@") and len(value) > 1:
+        return "'" + value
+    return value
+
+
+def _heading(ws, title: str, period_label: str, ncols: int, generated: datetime, scope: str | None,
+             brand: dict | None = None):
+    brand = brand or {}
+    lines = []
+    if brand.get("university"):
+        lines.append((brand["university"], Font(bold=True, size=12, color="064E3B")))
+    lines += [
+        (brand.get("system") or SYSTEM, Font(bold=True, size=11, color=BRAND)),
+        (brand.get("faculty") or FACULTY, Font(size=10, color="374151")),
         (title, Font(bold=True, size=15)),
         (f"Reporting period: {period_label}", Font(size=11)),
     ]
@@ -80,13 +101,13 @@ def _summary_block(ws, row: int, summary: list[tuple], ncols: int) -> int:
 def add_sheet(wb, name: str, title: str, period_label: str, columns: list[tuple], rows: list[dict],
               summary: list[tuple] | None = None, category_key: str | None = "category",
               status_col: str | None = None, scope: str | None = None, generated: datetime | None = None,
-              note: str | None = None):
+              note: str | None = None, brand: dict | None = None):
     """columns: [(key, header, width)]. Cells in `status_col` (default: the
     column named by category_key's label) are filled by row[category_key]."""
     generated = generated or datetime.now()
     ws = wb.create_sheet(title=name[:31])
     ncols = len(columns)
-    row = _heading(ws, title, period_label, ncols, generated, scope)
+    row = _heading(ws, title, period_label, ncols, generated, scope, brand)
     if summary:
         row = _summary_block(ws, row, summary, ncols)
     if note:
@@ -95,7 +116,8 @@ def add_sheet(wb, name: str, title: str, period_label: str, columns: list[tuple]
         row += 2
 
     header_row = row
-    for c, (_key, header, width) in enumerate(columns, 1):
+    columns = [tuple(c) + (None,) * (4 - len(c)) for c in columns]  # (key, header, width, kind)
+    for c, (_key, header, width, _kind) in enumerate(columns, 1):
         cell = ws.cell(row=header_row, column=c, value=header)
         cell.font = Font(bold=True, color="FFFFFF")
         cell.fill = PatternFill("solid", fgColor=BRAND)
@@ -106,7 +128,7 @@ def add_sheet(wb, name: str, title: str, period_label: str, columns: list[tuple]
 
     status_index = None
     if status_col:
-        status_index = next((i for i, (k, _h, _w) in enumerate(columns, 1) if k == status_col), None)
+        status_index = next((i for i, (k, _h, _w, _f) in enumerate(columns, 1) if k == status_col), None)
 
     # Style one scratch cell per look, then copy its style array to every
     # data cell: assigning openpyxl style objects cell by cell re-hashes them
@@ -114,8 +136,8 @@ def add_sheet(wb, name: str, title: str, period_label: str, columns: list[tuple]
     looks = {}
     scratch_ws = wb.create_sheet("_styles")
 
-    def look(wrap: bool, fill_key):
-        key = (wrap, fill_key)
+    def look(wrap: bool, fill_key, kind=None):
+        key = (wrap, fill_key, kind)
         if key not in looks:
             scratch = scratch_ws.cell(row=len(looks) + 1, column=1)
             scratch.border = BORDER
@@ -123,6 +145,8 @@ def add_sheet(wb, name: str, title: str, period_label: str, columns: list[tuple]
             if fill_key is not None:
                 scratch.fill = FILLS[fill_key]
                 scratch.font = BOLD
+            if kind in NUMBER_FORMATS:
+                scratch.number_format = NUMBER_FORMATS[kind]
             looks[key] = copy(scratch._style)
         return looks[key]
 
@@ -131,13 +155,14 @@ def add_sheet(wb, name: str, title: str, period_label: str, columns: list[tuple]
         fill_key = r.get(category_key) if category_key else None
         if fill_key not in FILLS:
             fill_key = None
-        for c, (key, _header, _width) in enumerate(columns, 1):
+        for c, (key, _header, _width, kind) in enumerate(columns, 1):
             value = r.get(key)
             if isinstance(value, bool):
                 value = "Yes" if value else "No"
-            cell = ws.cell(row=row, column=c, value=value if value not in (None, "") else None)
+            cell = ws.cell(row=row, column=c, value=_safe(value) if value not in (None, "") else None)
             wrap = isinstance(value, str) and len(value) > 18
-            cell._style = copy(look(wrap, fill_key if c == status_index else None))
+            numeric = kind if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+            cell._style = copy(look(wrap, fill_key if c == status_index else None, numeric))
     wb.remove(scratch_ws)
 
     if not rows:

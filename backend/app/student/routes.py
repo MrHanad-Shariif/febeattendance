@@ -99,6 +99,15 @@ def my_report():
     return jsonify(build_student_report(user))
 
 
+@student_bp.get("/report/export")
+@roles_required("student")
+def my_report_download():
+    from app.utils import report_export as rx
+    from app.utils.student_report import student_report_export
+
+    return student_report_export(current_user(), rx.export_format())
+
+
 @student_bp.post("/face")
 @roles_required("student")
 @limiter.limit("10/hour", key_func=lambda: f"user:{current_user().id}")

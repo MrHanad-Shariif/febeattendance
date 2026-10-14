@@ -485,13 +485,32 @@ def test_excel_exports(client, world, audience, period, view):
     assert resp.mimetype.endswith("spreadsheetml.sheet")
     wb = load_workbook(io.BytesIO(resp.data))
     ws = wb.worksheets[0]
-    assert "FEBEMS" in ws["A1"].value
-    assert "Attendance Report" in ws["A3"].value
-    assert ws["A4"].value.startswith("Reporting period:")
+    assert ws["A1"].value == "SIMAD University"
+    assert "FEBEMS" in ws["A2"].value
+    assert "Attendance Report" in ws["A4"].value
+    assert ws["A5"].value.startswith("Reporting period:")
+    assert resp.headers["Content-Disposition"].endswith(".xlsx")
+    assert f"FEBE_{audience[:-1].title()}_Attendance_{view.title()}_" in resp.headers["Content-Disposition"]
     assert ws.page_setup.orientation == "landscape"
     assert ws.print_title_rows is not None
     if view == "detailed":
         assert ws.title == "Detailed" and "Summary" in wb.sheetnames
+
+
+@pytest.mark.parametrize("audience", ["lecturers", "students"])
+@pytest.mark.parametrize("view", ["summary", "detailed"])
+def test_pdf_exports(client, world, audience, view):
+    _history(world)
+    resp = client.get(f"/api/admin/attendance-reports/export?audience={audience}&period=monthly&view={view}&format=pdf",
+                      headers=auth_header(world["admin"]))
+    assert resp.status_code == 200, resp.data[:300]
+    assert resp.mimetype == "application/pdf" and resp.data.startswith(b"%PDF")
+    assert resp.headers["Content-Disposition"].endswith(".pdf")
+
+
+def test_export_rejects_unknown_format(client, world):
+    resp = client.get("/api/admin/attendance-reports/export?audience=lecturers&format=docx", headers=auth_header(world["admin"]))
+    assert resp.status_code == 400
 
 
 def test_rankings_excel_export(client, world):

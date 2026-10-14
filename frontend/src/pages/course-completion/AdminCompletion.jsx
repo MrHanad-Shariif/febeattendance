@@ -6,6 +6,7 @@ import { Field, OptionSelect, useApi } from "@/components/committees/shared";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { DataTable, DataTableColumnHeader } from "@/components/data-table";
 import { Alert, PageHeader } from "@/components/page-header";
+import ExportMenu from "@/components/ExportMenu.jsx";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -356,12 +357,16 @@ export default function AdminCompletion() {
         description="Chapters covered against chapters planned, per course, class and lecturer."
         actions={
           <>
-            <Button variant="outline" onClick={() => download(true)} disabled={!className || !!downloading} title={className ? undefined : "Choose a class first"}>
-              <FileSpreadsheet /> {downloading === "class" ? "Preparing..." : className ? `Download ${className}` : "Download by class"}
+            <Button variant="outline" onClick={() => download(!!className)} disabled={!activeSemester || !!downloading} title="The raw data sheet, one row per submitted report">
+              <FileSpreadsheet /> {downloading ? "Preparing..." : "Raw data (.xlsx)"}
             </Button>
-            <Button onClick={() => download(false)} disabled={!activeSemester || !!downloading}>
-              <FileSpreadsheet /> {downloading === "all" ? "Preparing..." : "Download all"}
-            </Button>
+            <ExportMenu
+              url="/course-completion/export"
+              params={{ semester: activeSemester, ...(className ? { class_name: className } : {}) }}
+              name="Course_Completion"
+              label={className ? `Download ${className}` : "Download all classes"}
+              disabled={!activeSemester}
+            />
           </>
         }
       />

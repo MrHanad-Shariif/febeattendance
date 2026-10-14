@@ -5,6 +5,7 @@ import client, { apiErrorMessage } from "@/api/client";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { DataTable, DataTableColumnHeader } from "@/components/data-table";
 import { Alert, PageHeader } from "@/components/page-header";
+import ExportMenu from "@/components/ExportMenu.jsx";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -272,6 +273,7 @@ export default function Timetable() {
         actions={
           <>
             <SemesterBadge name={semester?.semester_name} />
+            <ExportMenu url="/admin/timetable/export" name="Timetable" />
             {can("timetable:add") && can("timetable:edit") && can("timetable:delete") && (
               <Button variant="outline" onClick={() => setUploadOpen(true)}>
                 <FileSpreadsheet /> Upload Excel

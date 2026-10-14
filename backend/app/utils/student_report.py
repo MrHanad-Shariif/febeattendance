@@ -72,3 +72,47 @@ def _session_row(r, absence) -> dict:
         "status_label": StudentAttendance.STATUS_LABELS.get(r.status, r.status),
         "remarks": r.remarks,
     }
+
+
+STATUS_CATEGORY = {"on_time": "present", "late": "late", "absent": "absent", "present": "justified", "exempted": "exempted"}
+
+
+def student_report_export(student, fmt: str):
+    """One student's semester report (the same figures as the on-screen
+    report) as a PDF or Excel download."""
+    from app.utils import report_export as rx
+
+    data = build_student_report(student)
+    info, t = data["basic_info"], data["totals"]
+    for s in data["summary"]:
+        s["standing"] = "Retake required" if s["needs_retake"] else "OK"
+        s["category"] = "blocked" if s["needs_retake"] else "present"
+    summary_cols = [rx.Column("course_name", "Course", 30), rx.Column("batch", "Class", 10),
+                    rx.Column("sessions_held", "Sessions held", 9, "int"), rx.Column("total_sessions", "Planned sessions", 9, "int"),
+                    rx.Column("on_time", "On time", 8, "int"), rx.Column("late", "Late", 7, "int"),
+                    rx.Column("absent", "Absent", 7, "int"), rx.Column("present_excused", "Excused", 8, "int"),
+                    rx.Column("exempted_sessions", "Exempted", 8, "int"),
+                    rx.Column("effective_absences", "Effective absences", 9, "int"),
+                    rx.Column("absence_percentage", "Absence %", 9, "pct"), rx.Column("standing", "Standing", 13)]
+    sessions = []
+    for course in data["detailed"]:
+        for r in course["sessions"]:
+            sessions.append({**r, "course_name": course["course_name"], "batch": course["batch"],
+                             "category": STATUS_CATEGORY.get(r["status"])})
+    session_cols = [rx.Column("date", "Date", 11), rx.Column("course_name", "Course", 30), rx.Column("batch", "Class", 10),
+                    rx.Column("status_label", "Status", 18), rx.Column("remarks", "Remarks", 40)]
+    cells = [("Sessions held", t["sessions_held"], None), ("On time", t["on_time"], "present"),
+             ("Late", t["late"], "late"), ("Absent", t["absent"], "absent"),
+             ("Excused", t["present_excused"], "justified"), ("Exempted (not counted)", t["exempted_sessions"], "exempted")]
+    tables = [
+        rx.Table("Summary", "Attendance by course", summary_cols, data["summary"], summary=cells, status_col="standing",
+                 note="Absence % is measured against each course's planned sessions for the whole semester. "
+                      "Exempted sessions (lecturer unavailable) are not counted."),
+        rx.Table("Sessions", "Session-by-session record", session_cols, sessions, status_col="status_label"),
+    ]
+    filters = [f"Student: {info['name']} ({info['student_id_number'] or 'no ID'})", f"Class: {info['batch'] or '-'}"]
+    if info.get("department"):
+        filters.append(f"Department: {info['department']}")
+    semester = get_all_settings().get("semester_name") or "Current semester"
+    return rx.send(rx.Report("Student Attendance Report", f"Student_Report_{info['student_id_number'] or student.id}",
+                             semester, tables, filters=filters, orientation="landscape"), fmt)

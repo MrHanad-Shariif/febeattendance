@@ -4,6 +4,7 @@ import { ArrowLeft, Printer } from "lucide-react";
 import client, { apiErrorMessage } from "@/api/client";
 import StudentReportView from "@/components/StudentReportView.jsx";
 import { Alert, PageHeader } from "@/components/page-header";
+import ExportMenu from "@/components/ExportMenu.jsx";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -37,6 +38,7 @@ export default function AdminStudentReport() {
                 <Printer /> Printable version
               </Link>
             </Button>
+            <ExportMenu url={`/admin/students/${id}/report/export`} name="Student_Report" />
           </>
         }
       />

@@ -51,13 +51,14 @@ LECTURER_STATUS_LABELS = {
     "not_yet": "Not yet",
 }
 STUDENT_CATEGORY = {"on_time": "present", "late": "late", "absent": "absent", "present": "justified", "not_yet": "not_yet"}
-MAX_RANGE_DAYS = 400
+MAX_RANGE_DAYS = 1500  # about four academic years, for "all records"
 
 
 # ---------- periods ----------
 
 def resolve_period(args, today: date_cls | None = None) -> dict:
-    """period=daily|monthly|semester|range (+ date / month / from,to)."""
+    """period=daily|weekly|monthly|semester|academic_year|all|range
+    (+ date / month / year / from,to)."""
     today = today or date_cls.today()
     period = (args.get("period") or "daily").lower()
     if period == "daily":
@@ -87,7 +88,46 @@ def resolve_period(args, today: date_cls | None = None) -> dict:
             raise ValidationError("Choose a start and an end date")
         start, end = parse_iso_date(args["from"], "from"), parse_iso_date(args["to"], "to")
         return {"period": "range", "from": start, "to": end, "label": f"{start:%d %b %Y} – {end:%d %b %Y}"}
-    raise ValidationError("period must be daily, monthly, semester or range")
+    if period == "weekly":
+        d = parse_iso_date(args["date"], "date") if args.get("date") else today
+        start = d - timedelta(days=d.weekday())
+        end = start + timedelta(days=6)
+        return {"period": "weekly", "from": start, "to": end, "label": f"Week of {start:%d %b} – {end:%d %b %Y}"}
+    if period == "academic_year":
+        settings = get_all_settings()
+        month, day = (int(x) for x in (get_setting_str("academic_year_start", settings) or "09-01").split("-"))
+        if args.get("year"):
+            year = clean_year(args["year"])
+        else:
+            year = today.year if (today.month, today.day) >= (month, day) else today.year - 1
+        start = date_cls(year, month, day)
+        end = date_cls(year + 1, month, day) - timedelta(days=1)
+        return {"period": "academic_year", "from": start, "to": end,
+                "label": f"Academic year {year}/{year + 1} ({start:%d %b %Y} – {end:%d %b %Y})"}
+    if period == "all":
+        first = [x for x in (
+            Attendance.query.with_entities(db_func_min(Attendance.date)).scalar(),
+            StudentAttendance.query.with_entities(db_func_min(StudentAttendance.date)).scalar(),
+        ) if x]
+        start = min(first) if first else today
+        return {"period": "all", "from": start, "to": today, "label": f"All records ({start:%d %b %Y} – {today:%d %b %Y})"}
+    raise ValidationError("period must be daily, weekly, monthly, semester, academic_year, all or range")
+
+
+def clean_year(value) -> int:
+    try:
+        year = int(value)
+    except (TypeError, ValueError):
+        raise ValidationError("year must be a year such as 2026")
+    if not 2000 <= year <= 2100:
+        raise ValidationError("year must be a year such as 2026")
+    return year
+
+
+def db_func_min(column):
+    from app.extensions import db
+
+    return db.func.min(column)
 
 
 def _check_range(start: date_cls, end: date_cls):
@@ -155,6 +195,25 @@ def _lecturer_category(status, justified):
     return status  # late | left_early | no_checkout | not_yet
 
 
+def lecturer_departments(lecturers) -> dict:
+    """lecturer id -> department: their own, else the department of most of
+    the courses they are assigned in the course catalogue."""
+    from collections import Counter
+
+    from app.models import Course
+
+    out = {u.id: u.department for u in lecturers if u.department}
+    missing = [u.id for u in lecturers if not u.department]
+    if missing:
+        counts = defaultdict(Counter)
+        for lid, dept in (Course.query.with_entities(Course.lecturer_id, Course.department)
+                          .filter(Course.lecturer_id.in_(missing), Course.department.isnot(None)).all()):
+            if dept:
+                counts[lid][dept] += 1
+        out.update({lid: c.most_common(1)[0][0] for lid, c in counts.items()})
+    return out
+
+
 def lecturer_session_rows(date_from: date_cls, date_to: date_cls, lecturer_id: int | None = None,
                           batch: str | None = None, course: str | None = None) -> list[dict]:
     """One row per lecturer per scheduled session in the range, numbered
@@ -171,6 +230,8 @@ def lecturer_session_rows(date_from: date_cls, date_to: date_cls, lecturer_id: i
     lecturers = {u.id: u for u in lecturers.all()}
     if not lecturers:
         return []
+
+    departments = lecturer_departments(lecturers.values())
 
     entries_by_lecturer = defaultdict(list)
     for e in Timetable.query.filter(Timetable.lecturer_id.in_(lecturers.keys()), Timetable.start_time.isnot(None)).all():
@@ -221,9 +282,15 @@ def lecturer_session_rows(date_from: date_cls, date_to: date_cls, lecturer_id: i
                     justification = "Justified" if justified else "Unjustified"
                 start_dt = datetime.combine(d, e.start_time)
                 end_dt = datetime.combine(d, e.end_time) if e.end_time else None
+                late_minutes = 0
+                if (category in ("present", "late", "left_early", "no_checkout")
+                        and record is not None and record.checkin_at is not None):
+                    late_minutes = max(0, int(minutes_between(record.checkin_at, start_dt)))
                 rows.append({
                     "lecturer_id": lid,
                     "lecturer_name": lecturer.name,
+                    "department": departments.get(lid),
+                    "late_minutes": late_minutes,
                     "date": d.isoformat(),
                     "day": day_abbr(d),
                     "session_number": n,
@@ -270,7 +337,10 @@ def _orphan_lecturer_row(lecturer, d, record):
     status = record.status
     category = _lecturer_category(status, justified)
     return {
-        "lecturer_id": lecturer.id, "lecturer_name": lecturer.name, "date": d.isoformat(), "day": day_abbr(d),
+        "lecturer_id": lecturer.id, "lecturer_name": lecturer.name, "department": lecturer.department,
+        "late_minutes": max(0, int(minutes_between(record.checkin_at, record.scheduled_start)))
+        if category in ("present", "late") and record.checkin_at and record.scheduled_start else 0,
+        "date": d.isoformat(), "day": day_abbr(d),
         "session_number": 1, "sessions_that_day": 1, "timetable_id": None,
         "class_name": "—", "course_name": "(no longer on the timetable)", "room": None, "periods": 1,
         "scheduled_start": _hhmm(record.scheduled_start), "scheduled_end": _hhmm(record.scheduled_end),
@@ -394,6 +464,7 @@ def _student_row(s, e, d, status, label, category, remarks, checkin=None, flagge
         "student_name": s.name,
         "student_id_number": s.student_id_number,
         "student_class": s.batch,
+        "department": s.department,
         "date": d.isoformat(),
         "day": day_abbr(d),
         "timetable_id": e.id,

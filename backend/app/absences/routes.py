@@ -55,6 +55,50 @@ def _list_row(a: LecturerAbsence, today: date) -> dict:
 @absences_bp.get("/lecturer-absences")
 @permission_required("lecturer_absences:view")
 def list_absences():
+    return jsonify(_filtered_rows())
+
+
+@absences_bp.get("/lecturer-absences/export")
+@permission_required("lecturer_absences:view")
+def export_absences():
+    """The absence list with the same filters, as PDF or Excel (format=pdf|xlsx)."""
+    from app.utils import report_export as rx
+
+    fmt = rx.export_format()
+    rows = _filtered_rows()
+    for r in rows:
+        r["period"] = f"{r['start_date']} to {r['actual_end_date'] or r['end_date'] or 'ongoing'}"
+        r["justified_text"] = "Justified" if r["justified"] else "Unjustified"
+        r["scope"] = ", ".join(r["affected_classes"] or []) or "All classes"
+        r["category"] = {"active": "late", "scheduled": "justified", "completed": "present", "cancelled": "exempted"}.get(r["status"])
+    cols = [rx.Column("lecturer_name", "Lecturer", 24), rx.Column("reason_label", "Absence / leave type", 20),
+            rx.Column("period", "Period", 22), rx.Column("status_label", "Status", 12),
+            rx.Column("justified_text", "Justification", 12), rx.Column("scope", "Classes affected", 18),
+            rx.Column("affected_sessions", "Sessions affected", 10, "int"),
+            rx.Column("affected_past_sessions", "Sessions so far", 10, "int"),
+            rx.Column("remarks", "Remarks", 30), rx.Column("created_by_name", "Recorded by", 18)]
+    by_status = {}
+    for r in rows:
+        by_status[r["status_label"]] = by_status.get(r["status_label"], 0) + 1
+    summary = [("Absences / leave", len(rows), None),
+               ("Sessions affected", sum(r["affected_sessions"] or 0 for r in rows), None)]
+    summary += [(label, n, None) for label, n in sorted(by_status.items())]
+    filters = []
+    if request.args.get("lecturer_id"):
+        u = User.query.get(request.args.get("lecturer_id", type=int))
+        filters.append(f"Lecturer: {u.name if u else '?'}")
+    if request.args.get("reason"):
+        filters.append(f"Type: {LecturerAbsence.REASONS.get(request.args['reason'], request.args['reason'])}")
+    if request.args.get("status"):
+        filters.append(f"Status: {LecturerAbsence.STATUS_LABELS.get(request.args['status'], request.args['status'])}")
+    period = (f"{request.args.get('from') or 'start'} to {request.args.get('to') or 'today'}"
+              if request.args.get("from") or request.args.get("to") else "All recorded absences")
+    table = rx.Table("Absences", "Lecturer Absence and Leave Report", cols, rows, summary=summary,
+                     status_col="status_label", note="Sessions covered by an absence are exempted: students are not marked absent for them.")
+    return rx.send(rx.Report("Lecturer Absence and Leave Report", "Lecturer_Absences", period, [table], filters=filters), fmt)
+
+
+def _filtered_rows():
     q = LecturerAbsence.query
     args = request.args
     if args.get("lecturer_id"):
@@ -79,7 +123,7 @@ def list_absences():
         if status not in LecturerAbsence.STATUS_LABELS:
             raise ValidationError("Unknown status")
         rows = [r for r in rows if r["status"] == status]
-    return jsonify(rows)
+    return rows
 
 
 @absences_bp.get("/lecturer-absences/options")
