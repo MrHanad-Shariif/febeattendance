@@ -5,6 +5,7 @@ from app.utils.schedule import get_batch_classes, scheduled_datetimes
 from app.utils.settings import get_all_settings, get_no_class_dates
 from app.utils.student_status import should_mark_student_absent, is_course_blocked
 from app.utils.absences import AbsenceIndex
+from app.utils.online import online_for
 
 EXEMPT_LABEL = "Class Session Exempted"
 
@@ -57,6 +58,10 @@ def get_student_today_rows(student, today) -> list[dict]:
             row["exempt_note"] = "Lecturer unavailable. This session does not count toward your attendance."
 
         blocked, stats = is_course_blocked(student.id, entry.batch, entry.course_name, settings)
+        online = online_for(entry, today)
+        row["delivery_mode"] = "online" if online else "campus"
+        row["meeting_link"] = online.meeting_link if online else None
+        row["online_instructions"] = online.instructions if online else None
         row["room"] = entry.room
         row["lecturer_name"] = entry.lecturer.name if entry.lecturer else None
         row["blocked"] = blocked and not record and not absence  # already-recorded sessions aren't re-blocked retroactively

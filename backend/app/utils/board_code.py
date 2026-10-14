@@ -94,5 +94,6 @@ def live_counts(entry, day) -> dict:
         "checked_in": sum(by_method.values()),
         "board": by_method.get("board", 0),
         "qr": by_method.get("qr", 0),
+        "online": by_method.get("online", 0),
         "enrolled": enrolled,
     }

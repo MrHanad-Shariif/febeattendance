@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { AlertTriangle, CalendarOff, Clock, DoorOpen, PenLine, QrCode, User } from "lucide-react";
 import client, { apiErrorMessage } from "@/api/client";
 import ClassNotices from "@/components/ClassNotices.jsx";
+import OnlineBanner from "@/components/OnlineBanner.jsx";
 import StatusBadge from "@/components/StatusBadge.jsx";
 import { Alert, PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -56,6 +57,7 @@ export default function StudentDashboard() {
 
       {loadError && <Alert>{loadError}</Alert>}
       <ClassNotices />
+      <OnlineBanner />
 
       {current && !rows.find((r) => r.timetable_id === current.session.timetable_id)?.blocked && (
         <Card className="border-primary/50 bg-primary/5">
@@ -103,6 +105,7 @@ export default function StudentDashboard() {
                       <p className="flex flex-wrap items-center gap-2 font-semibold">
                         {row.course_name}
                         {ongoing && <Badge className="bg-primary text-primary-foreground">Ongoing now</Badge>}
+                        {row.delivery_mode === "online" && <Badge variant="info">Online class</Badge>}
                       </p>
                       <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
                         <span className="flex items-center gap-1">
@@ -133,6 +136,22 @@ export default function StudentDashboard() {
                       <span className="flex items-center gap-2 text-sm text-danger">
                         <AlertTriangle className="h-4 w-4" /> Check-in blocked: your absences in this course reached the limit.
                       </span>
+                    ) : canCheckIn && row.delivery_mode === "online" ? (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button asChild size="sm">
+                          <Link to={`/student-checkin?online=${row.timetable_id}`}>
+                            <QrCode /> Check in online
+                          </Link>
+                        </Button>
+                        {row.meeting_link && (
+                          <Button asChild size="sm" variant="outline">
+                            <a href={row.meeting_link} target="_blank" rel="noopener noreferrer">
+                              Join the online class
+                            </a>
+                          </Button>
+                        )}
+                        <span className="text-xs text-muted-foreground">No campus code or location needed; your face is still checked.</span>
+                      </div>
                     ) : canCheckIn ? (
                       <span className="flex items-center gap-2 text-sm text-muted-foreground">
                         <QrCode className="h-4 w-4 text-primary" /> Scan the QR code on your lecturer's screen, or use the board code, to check in.

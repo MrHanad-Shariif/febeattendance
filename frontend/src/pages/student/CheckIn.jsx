@@ -106,6 +106,9 @@ export default function StudentCheckIn() {
   const [params] = useSearchParams();
   const sessionToken = params.get("s");
   const boardMode = !sessionToken && params.get("board") === "1";
+  // Officially online session: /student-checkin?online=<timetable id>.
+  const onlineId = !sessionToken && !boardMode ? Number(params.get("online")) || null : null;
+  const [meetingLink, setMeetingLink] = useState(null);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -191,13 +194,30 @@ export default function StudentCheckIn() {
     }
   }
 
-  const restart = boardMode ? startBoard : start;
+  // Online mode: no class code or location, the face step still applies.
+  async function startOnline() {
+    setPhase("loading");
+    setError("");
+    try {
+      const res = await client.post("/student/checkin/online", { timetable_id: onlineId });
+      accept(res.data);
+      setSession(res.data.session);
+      setSteps(res.data.steps);
+      setMeetingLink(res.data.meeting_link || null);
+      setPhase(res.data.steps.face ? "face" : "confirm");
+    } catch (err) {
+      refuse(err);
+    }
+  }
+
+  const restart = boardMode ? startBoard : onlineId ? startOnline : start;
 
   useEffect(() => {
     if (sessionToken) start();
     else if (boardMode) startBoard();
+    else if (onlineId) startOnline();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionToken, boardMode]);
+  }, [sessionToken, boardMode, onlineId]);
 
   async function submitBoard(e) {
     e.preventDefault();
@@ -323,7 +343,7 @@ export default function StudentCheckIn() {
     }
   }
 
-  if (!sessionToken && !boardMode) {
+  if (!sessionToken && !boardMode && !onlineId) {
     return (
       <div className="mx-auto max-w-md py-10">
         <Notice
@@ -359,6 +379,17 @@ export default function StudentCheckIn() {
 
   return (
     <div className="mx-auto max-w-md space-y-4 py-4">
+      {onlineId && phase !== "refused" && (
+        <div className="rounded-lg border border-info/50 bg-info/5 p-3 text-sm">
+          <p className="font-medium">Online class</p>
+          <p className="text-muted-foreground">No class code or location is needed today. Your face is still checked.</p>
+          {meetingLink && (
+            <a href={meetingLink} target="_blank" rel="noopener noreferrer" className="text-primary underline">
+              Open the online class
+            </a>
+          )}
+        </div>
+      )}
       {phase === "loading" && (
         <div className="flex items-center justify-center gap-2 py-20 text-muted-foreground">
           <Loader2 className="h-5 w-5 animate-spin" /> Opening check-in...

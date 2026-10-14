@@ -34,6 +34,7 @@ import AdminCompletion from "./pages/course-completion/AdminCompletion.jsx";
 // Committee archive: memos, meeting agendas and reports
 import Archive from "./pages/archive/Archive.jsx";
 import MyLeave from "./pages/leave/MyLeave.jsx";
+import OnlineTeaching from "./pages/admin/OnlineTeaching.jsx";
 
 import StudentDashboard from "./pages/student/Dashboard.jsx";
 import StudentCheckIn from "./pages/student/CheckIn.jsx";
@@ -182,6 +183,7 @@ export default function App() {
         <Route path="/admin/overview" element={allow(["lecturer_attendance:view"], <Overview />)} />
         <Route path="/admin/lecturers" element={allow(["lecturers:view"], <Lecturers />)} />
         <Route path="/admin/timetable" element={allow(["timetable:view"], <Timetable />)} />
+        <Route path="/admin/online-teaching" element={allow(["online_teaching:view"], <OnlineTeaching />)} />
         <Route path="/admin/reports" element={allow(["reports:view"], <Reports />)} />
         <Route path="/admin/settings" element={allow(["settings:view"], <Settings />)} />
         <Route path="/admin/students" element={allow(["students:view"], <Students />)} />

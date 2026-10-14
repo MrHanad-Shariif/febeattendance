@@ -13,6 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { formatTime } from "@/lib/utils";
 import { CompletionReminder } from "@/pages/course-completion/LecturerCompletion.jsx";
 import { LeaveBanner } from "@/pages/leave/MyLeave.jsx";
+import OnlineBanner from "@/components/OnlineBanner.jsx";
 
 function TimeTile({ icon: Icon, label, value }) {
   return (
@@ -51,6 +52,20 @@ export default function Dashboard() {
     const interval = setInterval(load, 60000);
     return () => clearInterval(interval);
   }, []);
+
+  // Online day: no campus code or location (the server checks this too).
+  async function checkInOnline(action) {
+    setSubmitting(true);
+    try {
+      await client.post(`/attendance/${action}`, {});
+      toast.success(action === "checkin" ? "Checked in (online)" : "Checked out");
+      load();
+    } catch (err) {
+      toast.error(apiErrorMessage(err, "Could not record your attendance"));
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   async function handleVerify({ code, lat, lng, note }) {
     setSubmitting(true);
@@ -112,6 +127,7 @@ export default function Dashboard() {
       />
       <LeaveBanner />
         <CompletionReminder />
+      <OnlineBanner />
 
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
         <Card>
@@ -120,6 +136,7 @@ export default function Dashboard() {
               <CardTitle className="flex flex-wrap items-center gap-2 text-lg">
                 {multiple ? "Today's classes" : classes[0].course_name}
                 {!multiple && classes[0].batch && <Badge>{classes[0].batch}</Badge>}
+                {day.all_online && <Badge variant="info">Online today</Badge>}
               </CardTitle>
               <p className="text-sm text-muted-foreground">
                 First class {formatTime(day.scheduled_start)} · Last class ends {formatTime(day.scheduled_end)}
@@ -137,6 +154,7 @@ export default function Dashboard() {
                     </span>
                     <span className="font-medium">{c.course_name}</span>
                     {c.batch && <Badge variant="secondary">{c.batch}</Badge>}
+                    {c.delivery_mode === "online" && <Badge variant="info">Online</Badge>}
                     {c.room && (
                       <span className="flex items-center gap-1 text-xs text-muted-foreground">
                         <DoorOpen className="h-3.5 w-3.5" /> {c.room}
@@ -167,7 +185,8 @@ export default function Dashboard() {
                 disabled={!canCheckIn}
                 onClick={() => {
                   setModalError("");
-                  setModalAction("checkin");
+                  if (day.all_online) checkInOnline("checkin");
+                  else setModalAction("checkin");
                 }}
               >
                 <LogIn /> Check in
@@ -178,14 +197,18 @@ export default function Dashboard() {
                 disabled={!canCheckOut}
                 onClick={() => {
                   setModalError("");
-                  setModalAction("checkout");
+                  if (day.all_online && day.checkin_mode === "online") checkInOnline("checkout");
+                  else setModalAction("checkout");
                 }}
               >
                 <LogOut /> Check out
               </Button>
             </div>
             <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <MapPin className="h-3.5 w-3.5" /> Location is verified against the campus when you check in or out.
+              <MapPin className="h-3.5 w-3.5" />{" "}
+              {day.all_online
+                ? "All your classes today are online: no campus code or location is needed."
+                : "Location is verified against the campus when you check in or out."}
               <Clock className="ml-2 h-3.5 w-3.5" /> Status refreshes every minute.
             </p>
           </CardContent>

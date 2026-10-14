@@ -203,10 +203,12 @@ def leave_and_class_notice_sweep(app):
     """Announce cancelled classes as they come within the notice window,
     reinstate ones no longer covered, and send leave-ending reminders."""
     from app.utils.leave import send_leave_reminders, sync_class_notices
+    from app.utils.online import send_return_notices
 
     with app.app_context():
         sync_class_notices()
         send_leave_reminders()
+        send_return_notices()
 
 
 def refresh_geoip_database(app):

@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import bcrypt
 
@@ -313,6 +313,7 @@ class Attendance(db.Model):
     # emergency, permission granted by the dean"). This is what makes monthly
     # reporting easy: absences/early-leaves are pre-split into justified vs
     # unjustified just by whether this field is empty.
+    checkin_mode = db.Column(db.String(20), nullable=True)  # campus | online (all of the day's classes were online)
     remarks = db.Column(db.String(500), nullable=True)
 
     reminder_sent_at = db.Column(db.DateTime, nullable=True)
@@ -348,6 +349,7 @@ class Attendance(db.Model):
             "checkout_distance_m": self.checkout_distance_m,
             "status": self.status,
             "status_label": self.STATUS_LABELS.get(self.status, self.status),
+            "checkin_mode": self.checkin_mode or "campus",
             "remarks": self.remarks,
             "justified": bool(self.remarks and self.remarks.strip()),
         }
@@ -2019,6 +2021,105 @@ class ClassNotice(db.Model):
             "reinstated_at": self.reinstated_at.isoformat() if self.reinstated_at else None,
             "history": self.history or [],
         }
+
+
+class OnlineArrangement(db.Model):
+    """A period when some classes are taught online instead of on campus:
+    one session (one class, one date), selected classes, a whole course or
+    class, or a lecturer's classes, for a date range. Delivery mode is a
+    property of each session date: outside the range the class is on
+    campus, so an arrangement can never leave a class online by mistake.
+    Past sessions are never rewritten: an arrangement that has started can
+    be extended or ended early, not moved or cancelled."""
+    __tablename__ = "online_arrangements"
+
+    STATUS_LABELS = {"scheduled": "Scheduled", "active": "Online now", "completed": "Ended (back on campus)",
+                     "cancelled": "Cancelled"}
+
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(200), nullable=True)
+    lecturer_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+    timetable_ids = db.Column(db.JSON, nullable=True)
+    batches = db.Column(db.JSON, nullable=True)
+    courses = db.Column(db.JSON, nullable=True)
+    days = db.Column(db.JSON, nullable=True)
+    start_date = db.Column(db.Date, nullable=False, index=True)
+    end_date = db.Column(db.Date, nullable=False)
+    actual_end_date = db.Column(db.Date, nullable=True)  # set when ended early
+    reason = db.Column(db.String(500), nullable=True)
+    meeting_link = db.Column(db.String(500), nullable=True)
+    instructions = db.Column(db.String(1000), nullable=True)
+    state = db.Column(db.String(20), nullable=False, default="recorded", index=True)  # recorded | ended | cancelled
+    return_notice_sent_for = db.Column(db.Date, nullable=True)
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+
+    lecturer = db.relationship("User", foreign_keys=[lecturer_id])
+    created_by = db.relationship("User", foreign_keys=[created_by_id])
+    updated_by = db.relationship("User", foreign_keys=[updated_by_id])
+    events = db.relationship("OnlineArrangementEvent", back_populates="arrangement", cascade="all, delete-orphan",
+                             order_by="OnlineArrangementEvent.created_at")
+
+    @property
+    def effective_end(self):
+        return self.actual_end_date or self.end_date
+
+    def covers_date(self, d) -> bool:
+        return self.state != "cancelled" and self.start_date <= d <= self.effective_end
+
+    def display_status(self, today=None) -> str:
+        from datetime import date as date_cls
+
+        today = today or date_cls.today()
+        if self.state == "cancelled":
+            return "cancelled"
+        if today < self.start_date:
+            return "scheduled"
+        if today > self.effective_end:
+            return "completed"
+        return "active"
+
+    def to_dict(self, today=None):
+        status = self.display_status(today)
+        return {
+            "id": self.id, "title": self.title, "lecturer_id": self.lecturer_id,
+            "lecturer_name": self.lecturer.name if self.lecturer else None,
+            "timetable_ids": self.timetable_ids or [], "batches": self.batches or [], "courses": self.courses or [],
+            "days": self.days or [], "start_date": self.start_date.isoformat(), "end_date": self.end_date.isoformat(),
+            "actual_end_date": self.actual_end_date.isoformat() if self.actual_end_date else None,
+            "return_date": (self.effective_end + timedelta(days=1)).isoformat(),
+            "reason": self.reason, "meeting_link": self.meeting_link, "instructions": self.instructions,
+            "state": self.state, "status": status, "status_label": self.STATUS_LABELS[status],
+            "created_by_name": self.created_by.name if self.created_by else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_by_name": self.updated_by.name if self.updated_by else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class OnlineArrangementEvent(db.Model):
+    """Audit trail: who created, changed, extended, ended or cancelled an
+    online arrangement, with the previous and new values."""
+    __tablename__ = "online_arrangement_events"
+
+    id = db.Column(db.Integer, primary_key=True)
+    arrangement_id = db.Column(db.Integer, db.ForeignKey("online_arrangements.id", ondelete="CASCADE"), nullable=False, index=True)
+    action = db.Column(db.String(30), nullable=False)
+    old_value = db.Column(db.JSON, nullable=True)
+    new_value = db.Column(db.JSON, nullable=True)
+    note = db.Column(db.String(500), nullable=True)
+    actor_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    actor_name = db.Column(db.String(200), nullable=True)
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False)
+
+    arrangement = db.relationship("OnlineArrangement", back_populates="events")
+
+    def to_dict(self):
+        return {"id": self.id, "action": self.action, "old_value": self.old_value, "new_value": self.new_value,
+                "note": self.note, "actor_name": self.actor_name,
+                "created_at": self.created_at.isoformat() if self.created_at else None}
 
 
 class AbsenceReviewItem(db.Model):

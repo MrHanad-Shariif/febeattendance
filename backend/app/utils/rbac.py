@@ -51,6 +51,12 @@ CATALOGUE = {
     "archive_confidential": ("Confidential documents", "Archive", {
         "view": "Open documents marked confidential",
     }),
+    "online_teaching": ("Online teaching", "Lecturers", {
+        "view": "See online teaching arrangements",
+        "add": "Move sessions, classes or courses online for a period",
+        "edit": "Extend, shorten or end an online arrangement early",
+        "delete": "Cancel an online arrangement that has not started",
+    }),
     "timetable": ("Timetable", "Lecturers", {
         "view": "See the timetable",
         "add": "Add timetable entries",

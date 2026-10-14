@@ -1377,13 +1377,13 @@ def checkin_methods_report():
     )
     sessions: dict[tuple, dict] = {}
     for timetable_id, day, method, n in counts:
-        row = sessions.setdefault((timetable_id, day), {"qr": 0, "board": 0})
-        row["board" if method == "board" else "qr"] += n
+        row = sessions.setdefault((timetable_id, day), {"qr": 0, "board": 0, "online": 0})
+        row[method if method in ("board", "online") else "qr"] += n
 
     boards: dict[tuple, list] = {}
     for b in BoardSession.query.filter(BoardSession.date >= date_from, BoardSession.date <= date_to).all():
         boards.setdefault((b.timetable_id, b.date), []).append(b)
-        sessions.setdefault((b.timetable_id, b.date), {"qr": 0, "board": 0})
+        sessions.setdefault((b.timetable_id, b.date), {"qr": 0, "board": 0, "online": 0})
 
     entries = {t.id: t for t in Timetable.query.filter(Timetable.id.in_({k[0] for k in sessions})).all()} if sessions else {}
     batch_sizes = dict(
@@ -1406,8 +1406,9 @@ def checkin_methods_report():
             "lecturer_name": entry.lecturer.name if entry.lecturer else None,
             "enrolled": enrolled,
             "qr": c["qr"],
+            "online": c["online"],
             "board": c["board"],
-            "checked_in": c["qr"] + c["board"],
+            "checked_in": c["qr"] + c["board"] + c["online"],
             "board_opened": bool(board_rows),
             "board_started_by": ", ".join(sorted({b.started_by.name for b in board_rows if b.started_by})) or None,
             "board_code_changes": sum(b.code_changes for b in board_rows),

@@ -45,6 +45,7 @@ def create_app(config_class=Config):
     from app.absences import absences_bp
     from app.attendance_reports import attendance_reports_bp
     from app.leave_requests import leave_bp
+    from app.online import online_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(admin_bp)
@@ -69,6 +70,7 @@ def create_app(config_class=Config):
     app.register_blueprint(absences_bp)
     app.register_blueprint(attendance_reports_bp)
     app.register_blueprint(leave_bp)
+    app.register_blueprint(online_bp)
 
     @app.get("/api/health")
     def health():
@@ -120,6 +122,7 @@ NEW_COLUMNS = [
     ("tasks", "report_recommendations", "TEXT"),
     ("special_exam_requests", "period_id", "INTEGER REFERENCES special_exam_periods(id) ON DELETE SET NULL"),
     ("lecturer_absences", "reminder_sent_for", "DATE"),
+    ("attendance", "checkin_mode", "VARCHAR(20)"),
     ("users", "phone", "VARCHAR(30)"),
     ("users", "program", "VARCHAR(150)"),
     ("users", "study_semester", "VARCHAR(30)"),

@@ -28,8 +28,8 @@ DETAIL_LIMIT = 3000
 
 LECTURER_DETAIL_COLUMNS = [
     ("date", "Date", 11), ("day", "Day", 6), ("lecturer_name", "Lecturer", 24), ("session_number", "Session", 8),
-    ("class_name", "Class", 12), ("course_name", "Course / subject", 30), ("scheduled_time", "Scheduled time", 13),
-    ("checkin_at", "Check-in", 9), ("checkout_at", "Check-out", 9), ("status_label", "Status", 22),
+    ("class_name", "Class", 12), ("course_name", "Course / subject", 30), ("delivery_mode", "Mode", 8),
+    ("scheduled_time", "Scheduled time", 13), ("checkin_at", "Check-in", 9), ("checkout_at", "Check-out", 9), ("status_label", "Status", 22),
     ("justification", "Justification", 13), ("remarks", "Remarks", 36),
 ]
 LECTURER_SUMMARY_COLUMNS = [
@@ -42,7 +42,8 @@ LECTURER_SUMMARY_COLUMNS = [
 STUDENT_DETAIL_COLUMNS = [
     ("date", "Date", 11), ("day", "Day", 6), ("student_name", "Student", 24), ("student_id_number", "ID number", 13),
     ("session_number", "Session", 8), ("class_name", "Class", 12), ("course_name", "Course / subject", 28),
-    ("lecturer_name", "Lecturer", 20), ("scheduled_time", "Scheduled time", 13), ("checkin_at", "Check-in", 9),
+    ("lecturer_name", "Lecturer", 20), ("delivery_mode", "Mode", 8), ("scheduled_time", "Scheduled time", 13),
+    ("checkin_at", "Check-in", 9),
     ("status_label", "Status", 20), ("justification", "Justification", 13), ("remarks", "Remarks / justification", 34),
 ]
 STUDENT_SUMMARY_COLUMNS = [

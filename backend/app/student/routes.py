@@ -433,6 +433,36 @@ def checkin_board():
     return _reply(ticket, steps={**steps, "code": True}, session=_session_info(entry, start_dt, end_dt))
 
 
+@student_bp.post("/checkin/online")
+@roles_required("student")
+@limiter.limit("10/minute", key_func=lambda: f"user:{current_user().id}")
+def checkin_online():
+    """Check in to an officially online session from anywhere: no class code
+    and no location, but every other check is the same (my class, the
+    session is running, not already checked in, not blocked) and the face
+    step still applies."""
+    from app.utils.online import online_for
+
+    user = current_user()
+    settings = get_all_settings()
+    data = request.get_json(silent=True) or {}
+    timetable_id = data.get("timetable_id")
+    if not isinstance(timetable_id, int) or isinstance(timetable_id, bool):
+        raise CheckinRefused("Choose the class you are checking in to.")
+    day = date.today()
+    entry, start_dt, end_dt = _open_session(user, timetable_id, day, settings)
+    arrangement = online_for(entry, day)
+    if arrangement is None:
+        raise CheckinRefused("This class is on campus today. Scan the QR code or enter the board code in class.",
+                             409, reason="not_online")
+    steps = _steps(settings)
+    if steps["face"] and user.face is None:
+        raise CheckinRefused(FACE_NOT_ENROLLED_MESSAGE, 403, reason="face_not_enrolled")
+    ticket = _new_ticket(user, entry, day, m="online", code=True, loc=True)
+    return _reply(ticket, steps={**steps, "code": False, "location": False}, online=True,
+                  meeting_link=arrangement.meeting_link, session=_session_info(entry, start_dt, end_dt))
+
+
 @student_bp.post("/checkin/code")
 @roles_required("student")
 @limiter.limit("10/minute", key_func=lambda: f"user:{current_user().id}")
@@ -548,7 +578,7 @@ def _record_checkin(user, entry, day, start_dt, end_dt, ticket, settings) -> Stu
     record.checkin_lng = ticket["lng"]
     record.checkin_distance_m = ticket["dist"]
     record.status = compute_student_checkin_status(start_dt, now, settings)
-    record.checkin_method = "board" if ticket.get("m") == "board" else "qr"
+    record.checkin_method = {"board": "board", "online": "online"}.get(ticket.get("m"), "qr")
 
     try:
         db.session.commit()

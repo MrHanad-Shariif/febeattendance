@@ -232,6 +232,9 @@ def lecturer_session_rows(date_from: date_cls, date_to: date_cls, lecturer_id: i
         return []
 
     departments = lecturer_departments(lecturers.values())
+    from app.utils.online import OnlineIndex
+
+    online_index = OnlineIndex.current()
 
     entries_by_lecturer = defaultdict(list)
     for e in Timetable.query.filter(Timetable.lecturer_id.in_(lecturers.keys()), Timetable.start_time.isnot(None)).all():
@@ -286,7 +289,9 @@ def lecturer_session_rows(date_from: date_cls, date_to: date_cls, lecturer_id: i
                 if (category in ("present", "late", "left_early", "no_checkout")
                         and record is not None and record.checkin_at is not None):
                     late_minutes = max(0, int(minutes_between(record.checkin_at, start_dt)))
+                online = online_index.covering(e, d)
                 rows.append({
+                    "delivery_mode": "online" if online else "campus",
                     "lecturer_id": lid,
                     "lecturer_name": lecturer.name,
                     "department": departments.get(lid),
@@ -457,6 +462,8 @@ def student_session_rows(date_from: date_cls, date_to: date_cls, student_id: int
 
 
 def _student_row(s, e, d, status, label, category, remarks, checkin=None, flagged=False, absence=None):
+    from app.utils.online import online_for
+
     start = datetime.combine(d, e.start_time) if e.start_time else None
     end = datetime.combine(d, e.end_time) if e.end_time else None
     return {
@@ -465,6 +472,7 @@ def _student_row(s, e, d, status, label, category, remarks, checkin=None, flagge
         "student_id_number": s.student_id_number,
         "student_class": s.batch,
         "department": s.department,
+        "delivery_mode": "online" if online_for(e, d) else "campus",
         "date": d.isoformat(),
         "day": day_abbr(d),
         "timetable_id": e.id,

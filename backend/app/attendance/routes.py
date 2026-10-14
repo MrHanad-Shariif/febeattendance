@@ -20,6 +20,12 @@ def _user_key():
     return f"user:{current_user().id}"
 
 
+def all_online(entries, d) -> bool:
+    from app.utils.online import online_for
+
+    return bool(entries) and all(online_for(e, d) for e in entries)
+
+
 def _verify_campus_presence(code: str, lat, lng, settings) -> tuple[bool, str, float | None]:
     """Returns (passed, reason_if_failed, distance_m_if_known)."""
     mode = settings.get("verification_mode", "both")
@@ -84,7 +90,14 @@ def checkin():
     if record and record.checkin_at:
         return jsonify({"error": "You've already checked in for today"}), 409
 
-    passed, reason, distance = _verify_campus_presence(code, lat, lng, settings)
+    # Officially online day: every class the lecturer teaches today is online,
+    # so the campus code and location are not asked for (identity still is:
+    # this is the signed-in lecturer's own account and own classes).
+    online = all_online(teaching or entries, today)
+    if online:
+        passed, reason, distance = True, "", None
+    else:
+        passed, reason, distance = _verify_campus_presence(code, lat, lng, settings)
     if not passed:
         return jsonify({"error": reason}), 403
 
@@ -102,6 +115,7 @@ def checkin():
     record.checkin_lng = lng
     record.checkin_distance_m = distance
     record.status = status
+    record.checkin_mode = "online" if online else "campus"
 
     try:
         db.session.commit()
@@ -131,7 +145,10 @@ def checkout():
         return jsonify({"error": "You've already checked out for today"}), 409
 
     settings = get_all_settings()
-    passed, reason, distance = _verify_campus_presence(code, lat, lng, settings)
+    if record.checkin_mode == "online" and all_online(get_day_classes(user.id, today, get_no_class_dates(settings)), today):
+        passed, reason, distance = True, "", None
+    else:
+        passed, reason, distance = _verify_campus_presence(code, lat, lng, settings)
     if not passed:
         return jsonify({"error": reason}), 403
 

@@ -7,10 +7,18 @@ from app.utils.status import should_mark_absent
 from app.utils.absences import AbsenceIndex, split_day_classes
 
 
-def _classes_payload(entries, covered=None):
+def _classes_payload(entries, covered=None, today=None):
+    from datetime import date as date_cls
+
+    from app.utils.online import online_for
+
     covered = covered or {}
+    today = today or date_cls.today()
+    online = {e.id: online_for(e, today) for e in entries}
     return [
         {
+            "delivery_mode": "online" if online[e.id] else "campus",
+            "meeting_link": online[e.id].meeting_link if online[e.id] else None,
             "session_number": n,
             "timetable_id": e.id,
             "course_name": e.course_name,
@@ -72,7 +80,10 @@ def get_today_rows(today, lecturer_id: int | None = None) -> list[dict]:
                 "justified": False,
             }
 
-        row["classes"] = _classes_payload(entries, covered)
+        row["classes"] = _classes_payload(entries, covered, today)
+        teach_now = teaching or entries
+        row["all_online"] = all(c["delivery_mode"] == "online" for c in row["classes"]
+                                if c["timetable_id"] in {e.id for e in teach_now})
         if covered:
             absence = next(iter(covered.values()))
             row["absence"] = {"id": absence.id, "reason_label": absence.reason_label,
