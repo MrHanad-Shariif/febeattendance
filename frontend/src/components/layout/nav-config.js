@@ -26,6 +26,7 @@ import {
   KeySquare,
   LayoutDashboard,
   LayoutGrid,
+  Clock3,
   MonitorSmartphone,
   Lock,
   ScanLine,
@@ -84,6 +85,7 @@ const MANAGEMENT = [
     children: [
       { label: "Daily attendance", icon: ClipboardCheck, to: "/admin/overview", perms: ["lecturer_attendance:view"] },
       { label: "Absences & leave", icon: CalendarOff, to: "/admin/lecturer-absences", perms: ["lecturer_absences:view"] },
+      { label: "Lateness & makeup", icon: Clock3, to: "/admin/punctuality", perms: ["lecturer_attendance:view", "reports:view"] },
       { label: "Manage lecturers", icon: UserCheck, to: "/admin/lecturers", perms: ["lecturers:view"] },
       { label: "Timetable", icon: CalendarClock, to: "/admin/timetable", perms: ["timetable:view"] },
       { label: "Online teaching", icon: MonitorSmartphone, to: "/admin/online-teaching", perms: ["online_teaching:view"] },
@@ -115,6 +117,10 @@ export function reportLinks(user) {
     can("reports:view") && {
       label: "Attendance rankings", icon: Trophy, to: "/admin/attendance-rankings",
       description: "Top lecturers, highest absence and lateness, and students who need warnings.",
+    },
+    can("reports:view") && {
+      label: "Lateness & makeup", icon: Clock3, to: "/admin/punctuality",
+      description: "Late minutes per lecturer, equivalent sessions for review, and makeup sessions, with PDF/Excel.",
     },
     can("reports:view") && {
       label: "Lecturer attendance", icon: Users, to: "/admin/reports",

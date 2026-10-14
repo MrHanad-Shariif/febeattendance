@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
 import { Ban, CheckCircle2, MailPlus, MoreHorizontal, Pencil, Send, Trash2, UserPlus } from "lucide-react";
 import { toast } from "sonner";
@@ -139,7 +140,9 @@ export default function Lecturers() {
             <Avatar className="h-8 w-8">
               <AvatarFallback>{initials(row.original.name)}</AvatarFallback>
             </Avatar>
-            <span className="font-medium">{row.original.name}</span>
+            <Link to={`/admin/punctuality/${row.original.id}`} className="font-medium hover:text-primary hover:underline" title="Attendance, late minutes and makeup sessions">
+              {row.original.name}
+            </Link>
           </div>
         ),
       },

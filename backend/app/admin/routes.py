@@ -679,9 +679,17 @@ def update_attendance_remarks(record_id):
     """Admin-entered justification for an early check-out or an absence.
     Blank means no permission/explanation was recorded; any text means it
     was justified (e.g. approved leave, a documented emergency)."""
+    from app.models import AttendanceCorrection
+
     record = Attendance.query.get_or_404(record_id)
     data = request.get_json(silent=True) or {}
+    old = record.remarks
     record.remarks = (data.get("remarks") or "").strip() or None
+    if old != record.remarks:
+        actor = current_user()
+        db.session.add(AttendanceCorrection(attendance_id=record.id, lecturer_id=record.lecturer_id,
+                                            old_value={"remarks": old}, new_value={"remarks": record.remarks},
+                                            reason="Remark changed", actor_id=actor.id, actor_name=actor.name))
     db.session.commit()
     return jsonify(record.to_dict())
 

@@ -489,6 +489,7 @@ class Setting(db.Model):
         "timetable_periods": ("07:30-09:00,09:30-11:00,11:00-12:30,12:45-14:15", "The daily teaching periods (start-end, comma separated). The timetable form offers them as quick choices; classes may still use other times."),
         "student_profile_self_edit": ("phone", "Profile fields students change themselves, comma separated (name, email, student_id_number, department, program, batch, study_semester, phone)."),
         "student_profile_approval": ("name,email,student_id_number,department,program,batch,study_semester", "Profile fields students may ask to change; an administrator approves each request. Fields in neither list are read-only."),
+        "late_minutes_per_equivalent_session": ("90", "Accumulated late minutes that equal one teaching session (e.g. 90 late minutes = 1 session, 180 = 2). Lecturers reaching it are flagged for Academic Office review; nothing is marked missed automatically."),
         "academic_year_start": ("09-01", "Month and day the academic year starts (MM-DD), used by the Academic year reporting period."),
     }
 
@@ -2120,6 +2121,108 @@ class OnlineArrangementEvent(db.Model):
         return {"id": self.id, "action": self.action, "old_value": self.old_value, "new_value": self.new_value,
                 "note": self.note, "actor_name": self.actor_name,
                 "created_at": self.created_at.isoformat() if self.created_at else None}
+
+
+class AttendanceCorrection(db.Model):
+    """Audit trail of corrections to a lecturer's daily attendance (times,
+    status, remarks): previous and new values, why, and who. Late minutes
+    and every total are recalculated from the corrected row."""
+    __tablename__ = "attendance_corrections"
+
+    id = db.Column(db.Integer, primary_key=True)
+    attendance_id = db.Column(db.Integer, db.ForeignKey("attendance.id", ondelete="CASCADE"), nullable=False, index=True)
+    lecturer_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    old_value = db.Column(db.JSON, nullable=True)
+    new_value = db.Column(db.JSON, nullable=True)
+    reason = db.Column(db.String(500), nullable=True)
+    actor_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    actor_name = db.Column(db.String(200), nullable=True)
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False)
+
+    def to_dict(self):
+        return {"id": self.id, "attendance_id": self.attendance_id, "old_value": self.old_value,
+                "new_value": self.new_value, "reason": self.reason, "actor_name": self.actor_name,
+                "created_at": self.created_at.isoformat() if self.created_at else None}
+
+
+class LatenessReview(db.Model):
+    """The Academic Office's decision on a lecturer's accumulated late
+    minutes for a period. Lateness itself is never deleted or rewritten:
+    reviews and makeup sessions sit beside the original records."""
+    __tablename__ = "lateness_reviews"
+
+    DECISIONS = {"makeup_required": "Makeup session(s) required", "warning": "Formal warning",
+                 "no_action": "Reviewed: no action", "deferred": "Deferred"}
+
+    id = db.Column(db.Integer, primary_key=True)
+    lecturer_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    period_from = db.Column(db.Date, nullable=False)
+    period_to = db.Column(db.Date, nullable=False)
+    late_minutes = db.Column(db.Integer, nullable=False)
+    equivalent_sessions = db.Column(db.Integer, nullable=False)
+    decision = db.Column(db.String(30), nullable=False)
+    comment = db.Column(db.String(1000), nullable=True)
+    reviewed_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    reviewed_by_name = db.Column(db.String(200), nullable=True)
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False)
+
+    def to_dict(self):
+        return {"id": self.id, "lecturer_id": self.lecturer_id, "period_from": self.period_from.isoformat(),
+                "period_to": self.period_to.isoformat(), "late_minutes": self.late_minutes,
+                "equivalent_sessions": self.equivalent_sessions, "decision": self.decision,
+                "decision_label": self.DECISIONS.get(self.decision, self.decision), "comment": self.comment,
+                "reviewed_by_name": self.reviewed_by_name,
+                "created_at": self.created_at.isoformat() if self.created_at else None}
+
+
+class MakeupSession(db.Model):
+    """A makeup (replacement) session a lecturer must teach: for lateness
+    accumulated into equivalent sessions, or to replace a missed or
+    cancelled session. Students of the class are told the date and time.
+    The original session and its record are never changed."""
+    __tablename__ = "makeup_sessions"
+
+    STATUS_LABELS = {"assigned": "Assigned", "completed": "Completed", "cancelled": "Cancelled"}
+    REASONS = {"late_minutes": "Accumulated late minutes", "missed_session": "Missed session",
+               "cancelled_session": "Cancelled session", "other": "Other"}
+
+    id = db.Column(db.Integer, primary_key=True)
+    lecturer_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    timetable_id = db.Column(db.Integer, db.ForeignKey("timetable.id", ondelete="SET NULL"), nullable=True)
+    review_id = db.Column(db.Integer, db.ForeignKey("lateness_reviews.id", ondelete="SET NULL"), nullable=True)
+    reason = db.Column(db.String(30), nullable=False, default="late_minutes")
+    replaces_date = db.Column(db.Date, nullable=True)  # the session it replaces, if any
+    course_name = db.Column(db.String(255), nullable=True)
+    batch = db.Column(db.String(50), nullable=True)
+    scheduled_date = db.Column(db.Date, nullable=False)
+    start_time = db.Column(db.Time, nullable=True)
+    end_time = db.Column(db.Time, nullable=True)
+    room = db.Column(db.String(100), nullable=True)
+    status = db.Column(db.String(20), nullable=False, default="assigned", index=True)
+    notes = db.Column(db.String(1000), nullable=True)
+    completed_at = db.Column(db.DateTime, nullable=True)
+    completed_note = db.Column(db.String(500), nullable=True)
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+    history = db.Column(db.JSON, nullable=True)  # [{action, by, at, note}]
+
+    lecturer = db.relationship("User", foreign_keys=[lecturer_id])
+
+    def to_dict(self):
+        return {
+            "id": self.id, "lecturer_id": self.lecturer_id, "lecturer_name": self.lecturer.name if self.lecturer else None,
+            "timetable_id": self.timetable_id, "review_id": self.review_id, "reason": self.reason,
+            "reason_label": self.REASONS.get(self.reason, self.reason),
+            "replaces_date": self.replaces_date.isoformat() if self.replaces_date else None,
+            "course_name": self.course_name, "batch": self.batch, "scheduled_date": self.scheduled_date.isoformat(),
+            "start_time": self.start_time.strftime("%H:%M") if self.start_time else None,
+            "end_time": self.end_time.strftime("%H:%M") if self.end_time else None, "room": self.room,
+            "status": self.status, "status_label": self.STATUS_LABELS.get(self.status, self.status),
+            "notes": self.notes, "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+            "completed_note": self.completed_note, "history": self.history or [],
+        }
 
 
 class AbsenceReviewItem(db.Model):

@@ -156,6 +156,8 @@ def validate_settings(data: dict, current: dict) -> dict[str, str]:
             from app.utils.profile import clean_field_list
 
             value = clean_field_list(value)
+        elif key == "late_minutes_per_equivalent_session":
+            clean_int(value, "Late minutes per equivalent session", minimum=15, maximum=1000)
         elif key == "academic_year_start":
             try:
                 datetime.strptime(f"2000-{value}", "%Y-%m-%d")
