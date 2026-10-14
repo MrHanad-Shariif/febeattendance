@@ -10,11 +10,12 @@ from app.notifications import notifications_bp
 from app.utils.authz import current_user, roles_required
 from app.utils.validation import clean_int
 
-STAFF_ROLES = ("admin", "lecturer")
+# Students see their own too (class cancellations, special exam decisions, assignments).
+ROLES = ("admin", "lecturer", "student")
 
 
 @notifications_bp.get("/notifications")
-@roles_required(*STAFF_ROLES)
+@roles_required(*ROLES)
 def list_notifications():
     user = current_user()
     query = Notification.query.filter_by(user_id=user.id)
@@ -28,7 +29,7 @@ def list_notifications():
 
 
 @notifications_bp.get("/notifications/summary")
-@roles_required(*STAFF_ROLES)
+@roles_required(*ROLES)
 def notification_summary():
     user = current_user()
     counts = dict(
@@ -38,11 +39,11 @@ def notification_summary():
         .all()
     )
     by_type = {t: counts.get(t, 0) for t in Notification.TYPES}
-    return jsonify({"total": sum(by_type.values()), **by_type})
+    return jsonify({"total": sum(counts.values()), **by_type})
 
 
 @notifications_bp.post("/notifications/read")
-@roles_required(*STAFF_ROLES)
+@roles_required(*ROLES)
 def mark_read():
     """Body: {"ids": [...]} to mark some, or {"all": true} (optionally with "type")."""
     user = current_user()

@@ -92,6 +92,15 @@ def my_today():
     return jsonify(get_student_today_rows(user, date.today()))
 
 
+@student_bp.get("/class-notices")
+@roles_required("student")
+def my_class_notices():
+    """Officially cancelled classes (and withdrawn cancellations) for my class."""
+    from app.utils.leave import student_class_notices
+
+    return jsonify(student_class_notices(current_user()))
+
+
 @student_bp.get("/report")
 @roles_required("student", "admin")
 def my_report():

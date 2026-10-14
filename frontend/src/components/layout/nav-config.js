@@ -48,6 +48,7 @@ export const NAV_BY_ROLE = {
       children: [
         { label: "Today", icon: ScanLine, to: "/", end: true },
         { label: "History", icon: History, to: "/history" },
+        { label: "My leave & absences", icon: CalendarOff, to: "/my-leave" },
       ],
     },
     {

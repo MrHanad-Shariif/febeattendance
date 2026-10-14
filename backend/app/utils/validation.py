@@ -139,6 +139,13 @@ def validate_settings(data: dict, current: dict) -> dict[str, str]:
         if key in ("report_university_name", "report_faculty_name", "report_footer"):
             if not value or len(value) > 200:
                 raise ValidationError("Report names and footer are required (max 200 characters)")
+        elif key == "leave_reminder_days_before":
+            clean_int(value, "Leave reminder days", minimum=0, maximum=60)
+        elif key == "class_notice_days_ahead":
+            clean_int(value, "Class notice days ahead", minimum=1, maximum=120)
+        elif key == "academic_office_contact":
+            if not value or len(value) > 200:
+                raise ValidationError("Academic Office contact is required (max 200 characters)")
         elif key == "academic_year_start":
             try:
                 datetime.strptime(f"2000-{value}", "%Y-%m-%d")

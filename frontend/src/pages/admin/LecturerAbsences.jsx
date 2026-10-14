@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Ban, CalendarCheck, CalendarOff, Eye, MoreHorizontal, Pencil, Plus, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import client, { apiErrorMessage } from "@/api/client";
@@ -17,6 +18,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/context/AuthContext.jsx";
 import { ABSENCE_STATUS, WEEKDAYS, formatDate, todayIso } from "@/lib/attendance";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import LeaveRequestsAdmin from "@/pages/leave/LeaveRequestsAdmin.jsx";
 
 const ALL = "all";
 
@@ -606,6 +609,14 @@ export default function LecturerAbsences() {
   const [closing, setClosing] = useState(null);
   const [cancelling, setCancelling] = useState(null);
   const [dialogInput, setDialogInput] = useState({ date: todayIso(), text: "" });
+  const [params, setParams] = useSearchParams();
+  const tab = params.get("tab") === "requests" ? "requests" : "absences";
+  const [pendingCount, setPendingCount] = useState(0);
+  const loadPending = () =>
+    client.get("/admin/leave-requests", { params: { status: "pending" } }).then((r) => setPendingCount(r.data.counts.pending || 0)).catch(() => {});
+  useEffect(() => {
+    loadPending();
+  }, []);
 
   useEffect(() => {
     client.get("/admin/lecturer-absences/options").then((res) => setOptions(res.data)).catch(() => {});
@@ -819,6 +830,28 @@ export default function LecturerAbsences() {
         }
       />
 
+      <Tabs value={tab} onValueChange={(v) => setParams(v === "requests" ? { tab: v } : {})}>
+        <TabsList>
+          <TabsTrigger value="absences">Recorded absences</TabsTrigger>
+          <TabsTrigger value="requests">
+            Leave requests
+            {pendingCount > 0 && (
+              <Badge variant="warning" className="ml-2">
+                {pendingCount}
+              </Badge>
+            )}
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value="requests" className="mt-4">
+          <LeaveRequestsAdmin
+            initialId={params.get("request") ? Number(params.get("request")) : null}
+            onChanged={() => {
+              loadPending();
+              load();
+            }}
+          />
+        </TabsContent>
+        <TabsContent value="absences" className="mt-4 space-y-4">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <div className="space-y-1">
           <Label className="text-xs text-muted-foreground">Lecturer</Label>
@@ -891,6 +924,8 @@ export default function LecturerAbsences() {
         pageSize={20}
       />
       <p className="text-xs text-muted-foreground">* Ongoing absences are projected to the end of the semester.</p>
+        </TabsContent>
+      </Tabs>
 
       <AbsenceForm open={formOpen} onOpenChange={setFormOpen} editing={editing} options={options} onSaved={load} />
       <AbsenceDetail id={viewing} onOpenChange={(o) => !o && setViewing(null)} onChanged={load} canEdit={canEdit} />

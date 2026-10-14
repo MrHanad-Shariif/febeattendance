@@ -401,6 +401,9 @@ class Setting(db.Model):
         "report_university_name": ("SIMAD University", "University name printed at the top of every PDF and Excel report."),
         "report_faculty_name": ("Faculty of Engineering and Built Environment (FEBE)", "Faculty name printed under the university name on reports."),
         "report_footer": ("SIMAD University - Faculty of Engineering and Built Environment", "Text in the footer of every PDF report page, next to the page number."),
+        "leave_reminder_days_before": ("2", "Remind a lecturer when this many days of their leave or absence remain, counting the last day (1 = on the last day, 2 = the day before). Use 0 to turn reminders off."),
+        "academic_office_contact": ("Academic Office, Faculty of Engineering and Built Environment", "Who lecturers should contact about leave and absences; shown in leave notifications."),
+        "class_notice_days_ahead": ("14", "How many days ahead students are told about cancelled classes. Cancellations further away are announced as they come within this window."),
         "academic_year_start": ("09-01", "Month and day the academic year starts (MM-DD), used by the Academic year reporting period."),
     }
 
@@ -962,7 +965,8 @@ class MeetingMinutes(db.Model):
 class Notification(db.Model):
     __tablename__ = "notifications"
 
-    TYPES = ("task", "meeting", "minutes", "notice", "assignment")
+    TYPES = ("task", "meeting", "minutes", "notice", "assignment", "course_completion", "special_exam_request",
+             "special_exam_decision", "leave", "class_notice")
 
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -1608,6 +1612,9 @@ class LecturerAbsence(db.Model):
     closed_at = db.Column(db.DateTime, nullable=True)
     cancelled_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     cancelled_at = db.Column(db.DateTime, nullable=True)
+    # The end date a "your leave ends soon" reminder was sent for, so it goes
+    # once, and again only if the end date changes.
+    reminder_sent_for = db.Column(db.Date, nullable=True)
 
     lecturer = db.relationship("User", foreign_keys=[lecturer_id])
     created_by = db.relationship("User", foreign_keys=[created_by_id])
@@ -1709,6 +1716,148 @@ class LecturerAbsenceEvent(db.Model):
             "new_value": self.new_value,
             "note": self.note,
             "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class LeaveRequest(db.Model):
+    """A lecturer's own request for leave, or a same-day report of an
+    unexpected absence. It never exempts anything by itself: only when an
+    Academic Office reviewer approves it is a LecturerAbsence created (and
+    linked here), which then exempts the affected sessions and notifies the
+    students. Rejected and withdrawn requests stay for the record."""
+    __tablename__ = "lecturer_leave_requests"
+
+    KINDS = {"leave": "Leave request", "same_day": "Same-day absence"}
+    STATUS_LABELS = {
+        "pending": "Pending review", "more_info": "More information requested", "approved": "Approved",
+        "rejected": "Rejected", "withdrawn": "Withdrawn",
+    }
+    OPEN = ("pending", "more_info")
+
+    id = db.Column(db.Integer, primary_key=True)
+    lecturer_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    kind = db.Column(db.String(20), nullable=False, default="leave")
+    reason = db.Column(db.String(30), nullable=False)
+    custom_reason = db.Column(db.String(200), nullable=True)
+    start_date = db.Column(db.Date, nullable=False)
+    end_date = db.Column(db.Date, nullable=False)
+    remarks = db.Column(db.String(1000), nullable=False)
+    timetable_ids = db.Column(db.JSON, nullable=True)  # affected sessions; empty = all classes in the dates
+    document_name = db.Column(db.String(255), nullable=True)
+    document_path = db.Column(db.String(500), nullable=True)
+    status = db.Column(db.String(20), nullable=False, default="pending", index=True)
+    reviewer_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    reviewed_at = db.Column(db.DateTime, nullable=True)
+    review_comment = db.Column(db.String(1000), nullable=True)
+    absence_id = db.Column(db.Integer, db.ForeignKey("lecturer_absences.id", ondelete="SET NULL"), nullable=True)
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+
+    lecturer = db.relationship("User", foreign_keys=[lecturer_id])
+    reviewer = db.relationship("User", foreign_keys=[reviewer_id])
+    absence = db.relationship("LecturerAbsence", foreign_keys=[absence_id])
+    events = db.relationship("LeaveRequestEvent", back_populates="request", cascade="all, delete-orphan",
+                             order_by="LeaveRequestEvent.created_at")
+
+    @property
+    def reason_label(self) -> str:
+        if self.reason == "other":
+            return self.custom_reason or "Other"
+        return LecturerAbsence.REASONS.get(self.reason, self.reason)
+
+    @property
+    def status_label(self) -> str:
+        return self.STATUS_LABELS.get(self.status, self.status)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "lecturer_id": self.lecturer_id,
+            "lecturer_name": self.lecturer.name if self.lecturer else None,
+            "kind": self.kind,
+            "kind_label": self.KINDS.get(self.kind, self.kind),
+            "reason": self.reason,
+            "custom_reason": self.custom_reason,
+            "reason_label": self.reason_label,
+            "start_date": self.start_date.isoformat(),
+            "end_date": self.end_date.isoformat(),
+            "days": (self.end_date - self.start_date).days + 1,
+            "remarks": self.remarks,
+            "timetable_ids": self.timetable_ids or [],
+            "document_name": self.document_name,
+            "status": self.status,
+            "status_label": self.status_label,
+            "reviewer_name": self.reviewer.name if self.reviewer else None,
+            "reviewed_at": self.reviewed_at.isoformat() if self.reviewed_at else None,
+            "review_comment": self.review_comment,
+            "absence_id": self.absence_id,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "events": [e.to_dict() for e in self.events],
+        }
+
+
+class LeaveRequestEvent(db.Model):
+    """Audit trail of a leave request: submitted, resubmitted, more_info,
+    approved, rejected, withdrawn. Rows are never edited."""
+    __tablename__ = "lecturer_leave_request_events"
+
+    id = db.Column(db.Integer, primary_key=True)
+    request_id = db.Column(db.Integer, db.ForeignKey("lecturer_leave_requests.id", ondelete="CASCADE"), nullable=False, index=True)
+    actor_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    actor_name = db.Column(db.String(200), nullable=True)
+    action = db.Column(db.String(30), nullable=False)
+    note = db.Column(db.String(1000), nullable=True)
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False)
+
+    request = db.relationship("LeaveRequest", back_populates="events")
+
+    def to_dict(self):
+        return {"id": self.id, "action": self.action, "actor_name": self.actor_name, "note": self.note,
+                "created_at": self.created_at.isoformat() if self.created_at else None}
+
+
+class ClassNotice(db.Model):
+    """One class session a student was told about: cancelled because the
+    lecturer is officially absent, or reinstated when that changed. Keyed by
+    (timetable row, date), so a session is announced once however often the
+    absence is edited, and the history of each session is kept."""
+    __tablename__ = "class_notices"
+    __table_args__ = (db.UniqueConstraint("timetable_id", "date", name="uq_class_notice_session"),)
+
+    id = db.Column(db.Integer, primary_key=True)
+    timetable_id = db.Column(db.Integer, db.ForeignKey("timetable.id", ondelete="CASCADE"), nullable=False, index=True)
+    date = db.Column(db.Date, nullable=False, index=True)
+    absence_id = db.Column(db.Integer, db.ForeignKey("lecturer_absences.id", ondelete="SET NULL"), nullable=True)
+    status = db.Column(db.String(20), nullable=False, default="cancelled")  # cancelled | reinstated
+    # Copied so the notice reads the same after the timetable changes.
+    batch = db.Column(db.String(50), nullable=True)
+    course_name = db.Column(db.String(200), nullable=True)
+    lecturer_name = db.Column(db.String(200), nullable=True)
+    start_time = db.Column(db.Time, nullable=True)
+    end_time = db.Column(db.Time, nullable=True)
+    room = db.Column(db.String(100), nullable=True)
+    notified_at = db.Column(db.DateTime, default=utcnow, nullable=False)
+    reinstated_at = db.Column(db.DateTime, nullable=True)
+    history = db.Column(db.JSON, nullable=True)  # [{"status", "at"}], oldest first
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "timetable_id": self.timetable_id,
+            "date": self.date.isoformat(),
+            "day": self.date.strftime("%A"),
+            "status": self.status,
+            "status_label": "Cancelled" if self.status == "cancelled" else "Will take place (cancellation withdrawn)",
+            "batch": self.batch,
+            "course_name": self.course_name,
+            "lecturer_name": self.lecturer_name,
+            "start_time": self.start_time.strftime("%H:%M") if self.start_time else None,
+            "end_time": self.end_time.strftime("%H:%M") if self.end_time else None,
+            "room": self.room,
+            "notified_at": self.notified_at.isoformat() if self.notified_at else None,
+            "reinstated_at": self.reinstated_at.isoformat() if self.reinstated_at else None,
+            "history": self.history or [],
         }
 
 

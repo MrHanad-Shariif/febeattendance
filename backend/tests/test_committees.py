@@ -105,9 +105,10 @@ def test_chair_of_one_committee_cannot_act_on_another(client, people):
 
 def test_students_are_locked_out(client, people):
     h = auth_header(people["student"])
-    for url in ("/api/committees", "/api/tasks", "/api/meetings", "/api/minutes", "/api/notices",
-                "/api/notifications", "/api/reports"):
+    for url in ("/api/committees", "/api/tasks", "/api/meetings", "/api/minutes", "/api/notices", "/api/reports"):
         assert client.get(url, headers=h).status_code == 403, url
+    # Students may read their own notifications (class cancellations...), never committee ones.
+    assert client.get("/api/notifications", headers=h).json == []
 
 
 def test_only_admins_manage_committees(client, people):

@@ -13,6 +13,7 @@ from app.utils.absences import (
     resolve_review_items, review_items_payload, session_list, snapshot, summarize_sessions, sync_review_items,
 )
 from app.utils.authz import current_user, permission_required
+from app.utils.leave import notify_lecturer_of_absence, sync_class_notices
 from app.utils.validation import ValidationError, clean_text, parse_iso_date
 
 
@@ -201,7 +202,15 @@ def create_absence():
     record_absence_event(absence, actor, "created", new=snapshot(absence))
     flagged = sync_review_items(absence)
     db.session.commit()
+    _announce(absence, "created")
     return jsonify({**_detail(absence), "flagged_for_review": flagged}), 201
+
+
+def _announce(absence, action, note=None):
+    """Tell the lecturer, and the students of any class this cancels or
+    reinstates (utils/leave.py)."""
+    notify_lecturer_of_absence(absence, action, note)
+    sync_class_notices(absence.lecturer_id)
 
 
 def _detail(a: LecturerAbsence) -> dict:
@@ -243,10 +252,11 @@ def update_absence(absence_id):
     new = snapshot(absence)
     if new == old:
         return jsonify(_detail(absence))
-    record_absence_event(absence, actor, "edited", old=old, new=new,
-                         note=clean_text(data.get("change_note"), "Note", max_len=500))
+    note = clean_text(data.get("change_note"), "Note", max_len=500)
+    record_absence_event(absence, actor, "edited", old=old, new=new, note=note)
     flagged = sync_review_items(absence)
     db.session.commit()
+    _announce(absence, "edited", note)
     return jsonify({**_detail(absence), "flagged_for_review": flagged})
 
 
@@ -278,6 +288,7 @@ def close_absence(absence_id):
                          or f"Lecturer returned on {returned:%d %b %Y}")
     sync_review_items(absence)
     db.session.commit()
+    _announce(absence, "closed")
     return jsonify(_detail(absence))
 
 
@@ -301,6 +312,7 @@ def cancel_absence(absence_id):
     sync_review_items(absence)
     AbsenceIndex.invalidate()
     db.session.commit()
+    _announce(absence, "cancelled", reason)
     return jsonify(_detail(absence))
 
 

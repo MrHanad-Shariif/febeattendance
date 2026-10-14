@@ -113,7 +113,7 @@ export default function AppLayout() {
               <Breadcrumbs items={items} />
             </div>
 
-            {user?.role !== "student" && <NotificationBell />}
+            <NotificationBell />
             <ThemeToggle />
 
             <DropdownMenu>

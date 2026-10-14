@@ -31,6 +31,7 @@ import AdminCompletion from "./pages/course-completion/AdminCompletion.jsx";
 
 // Committee archive: memos, meeting agendas and reports
 import Archive from "./pages/archive/Archive.jsx";
+import MyLeave from "./pages/leave/MyLeave.jsx";
 
 import StudentDashboard from "./pages/student/Dashboard.jsx";
 import StudentCheckIn from "./pages/student/CheckIn.jsx";
@@ -155,6 +156,7 @@ export default function App() {
         <Route path="/history" element={guard(["lecturer"], <History />)} />
         <Route path="/my-students" element={guard(["lecturer"], <LecturerStudentAttendance />)} />
         <Route path="/my-timetable" element={guard(["lecturer"], <LecturerTimetable />)} />
+        <Route path="/my-leave" element={guard(["lecturer"], <MyLeave />)} />
         <Route path="/course-completion" element={guard(["lecturer"], <LecturerCompletion />)} />
         <Route
           path="/assignments"
@@ -215,7 +217,7 @@ export default function App() {
         <Route path="/meeting-minutes/:id" element={guard(STAFF, <MinutesDetail />)} />
         <Route path="/information" element={guard(STAFF, <InformationSharing />)} />
         <Route path="/information/:id" element={guard(STAFF, <NoticeDetail />)} />
-        <Route path="/notifications" element={guard(STAFF, <Notifications />)} />
+        <Route path="/notifications" element={guard([...STAFF, "student"], <Notifications />)} />
         <Route path="/committee-reports" element={guard(STAFF, <CommitteeReports />)} />
         <Route path="/faculty" element={guard(STAFF, <FacultyOverview />)} />
       </Route>

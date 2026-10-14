@@ -48,6 +48,9 @@ const LECTURER_FIELD_LABELS = {
   reminder_minutes_before: "Reminder before class (minutes)",
   verification_mode: "Campus verification mode",
   location_rule: "Location rule (legacy)",
+  leave_reminder_days_before: "Leave-ending reminder (days remaining)",
+  academic_office_contact: "Academic Office contact (in leave notices)",
+  class_notice_days_ahead: "Tell students about cancelled classes (days ahead)",
 };
 
 const STUDENT_FIELD_LABELS = {

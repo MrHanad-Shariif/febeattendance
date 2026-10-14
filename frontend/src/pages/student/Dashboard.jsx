@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { AlertTriangle, CalendarOff, Clock, DoorOpen, PenLine, QrCode, User } from "lucide-react";
 import client, { apiErrorMessage } from "@/api/client";
+import ClassNotices from "@/components/ClassNotices.jsx";
 import StatusBadge from "@/components/StatusBadge.jsx";
 import { Alert, PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -54,6 +55,7 @@ export default function StudentDashboard() {
       />
 
       {loadError && <Alert>{loadError}</Alert>}
+      <ClassNotices />
 
       {current && !rows.find((r) => r.timetable_id === current.session.timetable_id)?.blocked && (
         <Card className="border-primary/50 bg-primary/5">

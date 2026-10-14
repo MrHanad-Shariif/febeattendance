@@ -199,6 +199,16 @@ def task_deadline_sweep(app):
         db.session.commit()
 
 
+def leave_and_class_notice_sweep(app):
+    """Announce cancelled classes as they come within the notice window,
+    reinstate ones no longer covered, and send leave-ending reminders."""
+    from app.utils.leave import send_leave_reminders, sync_class_notices
+
+    with app.app_context():
+        sync_class_notices()
+        send_leave_reminders()
+
+
 def refresh_geoip_database(app):
     """DB-IP publishes a new free city database every month."""
     with app.app_context():
@@ -234,6 +244,10 @@ def register_jobs(app, scheduler):
     scheduler.add_job(
         id="flush_email_outbox", func=flush_email_outbox, args=[app],
         trigger="interval", minutes=1, replace_existing=True,
+    )
+    scheduler.add_job(
+        id="leave_and_class_notice_sweep", func=leave_and_class_notice_sweep, args=[app],
+        trigger="interval", minutes=30, replace_existing=True,
     )
     scheduler.add_job(
         id="task_deadline_sweep", func=task_deadline_sweep, args=[app],

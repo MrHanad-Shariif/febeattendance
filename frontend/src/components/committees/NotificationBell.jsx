@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { Bell, CalendarDays, CheckCheck, ClipboardList, FileText, Megaphone } from "lucide-react";
+import { Bell, CalendarDays, CalendarOff, CalendarX2, CheckCheck, ClipboardList, FileText, Megaphone } from "lucide-react";
 import client from "@/api/client";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,7 +14,14 @@ import {
 import { formatDateTime } from "@/lib/committees";
 import { cn } from "@/lib/utils";
 
-export const NOTIFICATION_ICONS = { task: ClipboardList, meeting: CalendarDays, minutes: FileText, notice: Megaphone };
+export const NOTIFICATION_ICONS = {
+  task: ClipboardList,
+  meeting: CalendarDays,
+  minutes: FileText,
+  notice: Megaphone,
+  leave: CalendarOff,
+  class_notice: CalendarX2,
+};
 
 /** Top-bar bell: unread count, latest notifications, mark all read. */
 export function NotificationBell() {
