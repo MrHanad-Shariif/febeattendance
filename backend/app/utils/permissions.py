@@ -15,7 +15,7 @@ explicit `dean_task_override` setting.
 from app.models import (
     ArchiveDocument, Committee, CommitteeMember, FacultyRole, InformationPost, MeetingMinutes, Task, User,
 )
-from app.utils.rbac import has_permission, user_permissions
+from app.utils.rbac import has_permission, is_super_admin, user_permissions
 from app.utils.settings import get_setting_str
 from app.utils.validation import ValidationError
 
@@ -274,4 +274,5 @@ def capabilities(user: User) -> dict:
         # Fine-grained RBAC permissions ("<resource>:<action>") for building
         # the menu and hiding buttons. Display only: the API checks each one.
         "permissions": sorted(user_permissions(user)),
+        "is_super_admin": is_super_admin(user),
     }

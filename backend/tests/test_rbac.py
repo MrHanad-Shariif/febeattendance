@@ -146,3 +146,54 @@ def test_user_management_and_last_super_admin(client, admin, monkeypatch):
     assert client.delete(f"/api/access/users/{second.id}", headers=headers).status_code == 200
     assert client.put(f"/api/access/users/{admin.id}", json={"status": "disabled"}, headers=headers).status_code == 403  # self
     assert User.query.get(admin.id).status == "active"
+
+
+def test_user_list_includes_students_but_they_hold_no_roles(client, admin, lecturer):
+    student = make_user("student@example.com", role="student", student_id_number="S-100", batch="BCE08")
+    users = {u["email"]: u for u in client.get("/api/access/users", headers=auth_header(admin)).json}
+    assert {u["account_type"] for u in users.values()} == {"admin", "lecturer", "student"}
+    assert users["student@example.com"]["student_id_number"] == "S-100"
+    assert users["student@example.com"]["roles"] == [] and users["student@example.com"]["permission_count"] == 0
+    # Roles, status and deletion stay staff-only.
+    viewer_id = Role.query.filter_by(name="Viewer").one().id
+    headers = auth_header(admin)
+    assert client.put(f"/api/access/users/{student.id}", json={"role_ids": [viewer_id]}, headers=headers).status_code == 404
+    assert client.delete(f"/api/access/users/{student.id}", headers=headers).status_code == 404
+
+
+def test_only_super_admin_sets_other_users_passwords(client, admin, lecturer):
+    student = make_user("student@example.com", role="student", student_id_number="S-101")
+    old_student_headers = auth_header(student)
+    url = f"/api/access/users/{student.id}/password"
+
+    # A user manager without Super Admin can't, nor can students or lecturers.
+    manager = _staff("manager@example.com", _role("Users", "users:view", "users:edit"))
+    assert client.post(url, json={"password": "brand-new-pass"}, headers=auth_header(manager)).status_code == 403
+    assert client.post(url, json={"password": "brand-new-pass"}, headers=auth_header(lecturer)).status_code == 403
+    # Nor on your own account (use change-password, which checks the old one).
+    own = client.post(f"/api/access/users/{admin.id}/password", json={"password": "brand-new-pass"}, headers=auth_header(admin))
+    assert own.status_code == 403
+    assert client.post(url, json={"password": "short"}, headers=auth_header(admin)).status_code == 400
+
+    assert client.post(url, json={"password": "brand-new-pass"}, headers=auth_header(admin)).status_code == 200
+    assert User.query.get(student.id).check_password("brand-new-pass")
+    # Their old session is signed out.
+    assert client.get("/api/auth/me", headers=old_student_headers).status_code == 401
+    res = client.post("/api/auth/login", json={"email": "student@example.com", "password": "brand-new-pass"})
+    assert res.status_code == 200
+
+    for target in (lecturer, manager):
+        res = client.post(f"/api/access/users/{target.id}/password", json={"password": "another-pass-1"}, headers=auth_header(admin))
+        assert res.status_code == 200
+        assert User.query.get(target.id).check_password("another-pass-1")
+
+
+def test_setting_password_activates_an_invited_account(client, admin, monkeypatch):
+    from app.models import PasswordResetToken
+
+    monkeypatch.setattr("app.utils.invite.send_invite_email", lambda user, token: None)
+    res = client.post("/api/access/users", json={"name": "Office", "email": "office@example.com"}, headers=auth_header(admin))
+    uid = res.json["id"]
+    res = client.post(f"/api/access/users/{uid}/password", json={"password": "set-by-admin-1"}, headers=auth_header(admin))
+    assert res.status_code == 200 and res.json["status"] == "active"
+    assert PasswordResetToken.query.filter_by(user_id=uid, purpose="invite", used_at=None).count() == 0

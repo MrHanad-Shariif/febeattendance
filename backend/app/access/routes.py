@@ -1,4 +1,5 @@
-"""User management: staff accounts, roles and the permission catalogue.
+"""User management: every account (staff, lecturers, students), roles and
+the permission catalogue.
 
 Rules that stop anyone from escalating their own access or locking everyone
 out (all enforced here, whatever the UI shows):
@@ -9,21 +10,23 @@ out (all enforced here, whatever the UI shows):
   delete a Super Admin's account.
 * Nobody changes their own roles or status, or deletes their own account.
 * There is always at least one active Super Admin.
+* Only a Super Admin can set another account's password.
 """
 from datetime import date, datetime, time, timedelta
 
 from flask import jsonify, request
 from sqlalchemy import func
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.access import access_bp
 from app.extensions import db
-from app.models import ActivityLog, Permission, Role, User
+from app.models import ActivityLog, PasswordResetToken, Permission, Role, User
 from app.utils.authz import STAFF_ROLES, current_user, permission_required
 from app.utils.invite import create_invited_user, resend_invite
 from app.utils.rbac import (
     SUPER_ADMIN, active_super_admins, catalogue, is_super_admin, user_permissions,
 )
-from app.utils.validation import ValidationError, clean_email, clean_text
+from app.utils.validation import ValidationError, check_password, clean_email, clean_text
 
 
 def _forbid(message: str):
@@ -167,12 +170,19 @@ def delete_role(role_id):
     return jsonify({"message": "Deleted"})
 
 
-# ---------- Users (staff accounts) ----------
+# ---------- Users (every account) ----------
 
 @access_bp.get("/users")
 @permission_required("users:view")
 def list_users():
-    users = User.query.filter(User.role.in_(STAFF_ROLES)).order_by(User.name).all()
+    """Staff, lecturers and students. Students hold no roles; only staff and
+    lecturer accounts can be given roles, disabled or deleted here."""
+    users = (
+        User.query
+        .options(joinedload(User.face), selectinload(User.roles).selectinload(Role.permissions))
+        .order_by(User.name)
+        .all()
+    )
     return jsonify([_user_payload(u) for u in users])
 
 
@@ -242,6 +252,29 @@ def resend_user_invite(user_id):
         raise ValidationError("This account is already activated.")
     resend_invite(user)
     return jsonify({"message": "Invite resent"})
+
+
+@access_bp.post("/users/<int:user_id>/password")
+@permission_required("users:edit")
+def set_user_password(user_id):
+    """A Super Admin sets a new password for any other account (staff,
+    lecturer or student). Every session the user had signs out, because the
+    password fingerprint in their tokens no longer matches. An invited
+    account is activated and its invite link stops working."""
+    actor = current_user()
+    if not is_super_admin(actor):
+        _forbid("Only a Super Admin can change another user's password.")
+    user = User.query.get_or_404(user_id)
+    if user.id == actor.id:
+        _forbid("Change your own password from your account settings.")
+    password = check_password((request.get_json(silent=True) or {}).get("password"))
+    user.set_password(password)
+    if user.status == "invited":
+        user.status = "active"
+        PasswordResetToken.query.filter_by(user_id=user.id, purpose="invite", used_at=None).update(
+            {"used_at": datetime.now()})
+    db.session.commit()
+    return jsonify(_user_payload(user))
 
 
 @access_bp.delete("/users/<int:user_id>")

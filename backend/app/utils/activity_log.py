@@ -86,6 +86,7 @@ ACTIONS = {
     "access.update_user": ("Users", "Changed a staff account"),
     "access.delete_user": ("Users", "Deleted a staff account"),
     "access.resend_user_invite": ("Users", "Resent a staff invite"),
+    "access.set_user_password": ("Users", "Changed a user's password"),
     "access.create_role": ("Roles", "Created a role"),
     "access.update_role": ("Roles", "Edited a role"),
     "access.delete_role": ("Roles", "Deleted a role"),

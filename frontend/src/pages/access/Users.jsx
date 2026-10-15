@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Ban, CheckCircle2, MoreHorizontal, Send, ShieldCheck, Trash2, UserCog, UserPlus } from "lucide-react";
+import { Ban, CheckCircle2, KeyRound, MoreHorizontal, Send, ShieldCheck, Trash2, UserCog, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import client, { apiErrorMessage } from "@/api/client";
 import StatusBadge from "@/components/StatusBadge.jsx";
@@ -20,7 +20,11 @@ import { initials } from "@/lib/utils";
 const TYPE_OPTIONS = [
   { value: "admin", label: "Staff" },
   { value: "lecturer", label: "Lecturer" },
+  { value: "student", label: "Student" },
 ];
+const TYPE_LABELS = Object.fromEntries(TYPE_OPTIONS.map((o) => [o.value, o.label]));
+const TYPE_BADGES = { admin: "info", lecturer: "secondary", student: "outline" };
+const MIN_PASSWORD_LENGTH = 8;
 const STATUS_OPTIONS = [
   { value: "active", label: "Active" },
   { value: "invited", label: "Invited" },
@@ -60,9 +64,10 @@ export function RolePicker({ roles, value, onChange, idPrefix }) {
 }
 
 /**
- * Authentication > Users: every staff account (administrative staff and
- * lecturers) with the roles it holds. Access to management screens comes
- * only from roles; lecturers keep their own teaching features without one.
+ * Authentication > Users: every account (administrative staff, lecturers
+ * and students) with the roles it holds. Access to management screens comes
+ * only from roles; lecturers keep their own teaching features without one,
+ * and students never hold roles. A Super Admin can set anyone's password.
  */
 export default function Users() {
   const { user: me, can } = useAuth();
@@ -77,6 +82,8 @@ export default function Users() {
   const [editing, setEditing] = useState(null);
   const [editRoles, setEditRoles] = useState([]);
   const [toDelete, setToDelete] = useState(null);
+  const [pwUser, setPwUser] = useState(null);
+  const [pw, setPw] = useState({ password: "", confirm: "" });
 
   function load() {
     setLoading(true);
@@ -157,8 +164,34 @@ export default function Users() {
     }
   }
 
+  function openPassword(u) {
+    setPw({ password: "", confirm: "" });
+    setPwUser(u);
+  }
+
+  async function savePassword(e) {
+    e.preventDefault();
+    if (pw.password !== pw.confirm) {
+      toast.error("The two passwords don't match");
+      return;
+    }
+    setSaving(true);
+    try {
+      await client.post(`/access/users/${pwUser.id}/password`, { password: pw.password });
+      toast.success(`Password changed for ${pwUser.name}`);
+      setPwUser(null);
+      setPw({ password: "", confirm: "" });
+      load();
+    } catch (err) {
+      toast.error(apiErrorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   const canEdit = can("users:edit");
   const canDelete = can("users:delete");
+  const canSetPassword = canEdit && !!me?.capabilities?.is_super_admin;
 
   const columns = useMemo(
     () => [
@@ -182,14 +215,29 @@ export default function Users() {
         ),
       },
       {
+        // Hidden by default; lets the search box match email, student ID and class.
+        id: "details",
+        accessorFn: (r) => [r.email, r.student_id_number, r.batch].filter(Boolean).join(" "),
+        header: "Email / Student ID",
+        meta: { label: "Email / Student ID" },
+      },
+      {
         accessorKey: "account_type",
         header: ({ column }) => <DataTableColumnHeader column={column} title="Account" />,
-        meta: { label: "Account", exportValue: (r) => (r.account_type === "admin" ? "Staff" : "Lecturer") },
+        meta: { label: "Account", exportValue: (r) => TYPE_LABELS[r.account_type] || r.account_type },
         filterFn: "equalsString",
         cell: ({ row }) => (
-          <Badge variant={row.original.account_type === "admin" ? "info" : "secondary"}>
-            {row.original.account_type === "admin" ? "Staff" : "Lecturer"}
-          </Badge>
+          <div className="space-y-0.5">
+            <Badge variant={TYPE_BADGES[row.original.account_type] || "secondary"}>
+              {TYPE_LABELS[row.original.account_type] || row.original.account_type}
+            </Badge>
+            {row.original.account_type === "student" && row.original.student_id_number && (
+              <p className="text-xs text-muted-foreground">
+                {row.original.student_id_number}
+                {row.original.batch ? ` · ${row.original.batch}` : ""}
+              </p>
+            )}
+          </div>
         ),
       },
       {
@@ -208,7 +256,7 @@ export default function Users() {
             </div>
           ) : (
             <span className="text-xs text-muted-foreground">
-              {row.original.account_type === "lecturer" ? "Teaching features only" : "No access yet"}
+              {{ lecturer: "Teaching features only", student: "Student portal only" }[row.original.account_type] || "No access yet"}
             </span>
           ),
       },
@@ -233,7 +281,8 @@ export default function Users() {
         meta: { noExport: true, className: "w-12 text-right" },
         cell: ({ row }) => {
           const u = row.original;
-          if (u.id === me?.id || (!canEdit && !canDelete)) return null;
+          const isStudent = u.account_type === "student";
+          if (u.id === me?.id || (isStudent && !canSetPassword) || (!canEdit && !canDelete)) return null;
           return (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -242,22 +291,27 @@ export default function Users() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                {canEdit && (
+                {canEdit && !isStudent && (
                   <DropdownMenuItem onSelect={() => openRoles(u)}>
                     <ShieldCheck /> Assign roles
                   </DropdownMenuItem>
                 )}
-                {canEdit && u.status === "invited" && (
+                {canSetPassword && (
+                  <DropdownMenuItem onSelect={() => openPassword(u)}>
+                    <KeyRound /> Change password
+                  </DropdownMenuItem>
+                )}
+                {canEdit && !isStudent && u.status === "invited" && (
                   <DropdownMenuItem onSelect={() => resend(u)}>
                     <Send /> Resend invite
                   </DropdownMenuItem>
                 )}
-                {canEdit && u.status === "active" && (
+                {canEdit && !isStudent && u.status === "active" && (
                   <DropdownMenuItem onSelect={() => update(u, { status: "disabled" }, `${u.name} disabled`)}>
                     <Ban /> Disable
                   </DropdownMenuItem>
                 )}
-                {canEdit && u.status === "disabled" && (
+                {canEdit && !isStudent && u.status === "disabled" && (
                   <DropdownMenuItem onSelect={() => update(u, { status: "active" }, `${u.name} enabled`)}>
                     <CheckCircle2 /> Enable
                   </DropdownMenuItem>
@@ -277,14 +331,14 @@ export default function Users() {
       },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [me?.id, canEdit, canDelete]
+    [me?.id, canEdit, canDelete, canSetPassword]
   );
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Users"
-        description="Staff and lecturer accounts and the roles that decide what each one can view, add, edit or delete."
+        description="Every staff, lecturer and student account, and the roles that decide what staff can view, add, edit or delete."
         actions={
           can("users:add") && (
             <Button onClick={() => setAddOpen(true)}>
@@ -301,13 +355,14 @@ export default function Users() {
         data={users}
         loading={loading}
         getRowId={(r) => String(r.id)}
-        searchPlaceholder="Search name, email or role..."
+        searchPlaceholder="Search name, email, role or student ID..."
+        initialVisibility={{ details: false }}
         filters={[
           { columnId: "account_type", label: "Account", options: TYPE_OPTIONS },
           { columnId: "status", label: "Status", options: STATUS_OPTIONS },
         ]}
         exportName="users"
-        emptyText="No staff accounts yet."
+        emptyText="No user accounts yet."
       />
 
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
@@ -367,6 +422,55 @@ export default function Users() {
               </Button>
               <Button type="submit" disabled={saving}>
                 {saving ? "Saving..." : "Save roles"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!pwUser} onOpenChange={(o) => !o && setPwUser(null)}>
+        <DialogContent>
+          <form onSubmit={savePassword} className="space-y-4">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <KeyRound className="h-5 w-5 text-primary" /> Change password for {pwUser?.name}
+              </DialogTitle>
+              <DialogDescription>
+                {pwUser?.email}. They are signed out everywhere and must sign in with the new password. Share it with them
+                securely.
+                {pwUser?.status === "invited" && " Their account is activated and the invite link stops working."}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-1.5">
+              <Label htmlFor="pw-new">New password</Label>
+              <Input
+                id="pw-new"
+                type="password"
+                autoComplete="new-password"
+                required
+                minLength={MIN_PASSWORD_LENGTH}
+                value={pw.password}
+                onChange={(e) => setPw((p) => ({ ...p, password: e.target.value }))}
+              />
+              <p className="text-xs text-muted-foreground">At least {MIN_PASSWORD_LENGTH} characters.</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="pw-confirm">Confirm new password</Label>
+              <Input
+                id="pw-confirm"
+                type="password"
+                autoComplete="new-password"
+                required
+                value={pw.confirm}
+                onChange={(e) => setPw((p) => ({ ...p, confirm: e.target.value }))}
+              />
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setPwUser(null)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={saving}>
+                {saving ? "Saving..." : "Change password"}
               </Button>
             </DialogFooter>
           </form>
